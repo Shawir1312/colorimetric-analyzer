@@ -51,6 +51,13 @@ Alat analisis warna spektral mandiri (*portable spectrophotometer / colorimeter*
 | **SDA** | GPIO 33 |
 | **SCL** | GPIO 35 |
 
+### 3. Baterai 18650 & Modul Cas TP4056
+| Fungsi | Rangkaian Pembagi Tegangan (*Voltage Divider*) | Pin ESP32-S2 Mini |
+| :--- | :--- | :--- |
+| **Sensor Tegangan Baterai** | Baterai (+) $\rightarrow$ `[1kΩ]` $\rightarrow$ **IO 1** $\rightarrow$ `[1kΩ]` $\rightarrow$ GND | **GPIO 1** (ADC1) |
+| **Deteksi Charger USB 5V** | USB Input TP4056 (+) $\rightarrow$ `[5kΩ]` $\rightarrow$ **IO 2** $\rightarrow$ `[1kΩ]` (atau `[5kΩ]`) $\rightarrow$ GND | **GPIO 2** (ADC1) |
+| **Ground Bersama** | Baterai (-), TP4056 GND & ESP32 GND terhubung bersama | **GND** |
+
 ---
 
 ## Konfigurasi Arduino IDE
@@ -87,3 +94,35 @@ Alat ini dilengkapi fitur pembaruan firmware over-the-air langsung dari GitHub R
    - Buka menu **Pengaturan > Update Firmware**.
    - Tekan tombol **Cek Update**. Alat akan mendeteksi versi baru dan mengaktifkan tombol **Pasang Update**.
    - Tekan **Pasang Update** untuk mengunduh dan memasang firmware secara otomatis.
+
+---
+
+## 🌐 Aplikasi Web & Database Kolorimeter (Full PHP)
+
+Folder `web/` berisi sistem dashboard web modern berbasis PHP murni untuk menyimpan, menganalisis, dan membandingkan hasil pengukuran warna spektrofotometri dari mikrokontroler ESP32-S2 secara nirkabel (WiFi).
+
+### Fitur Web:
+- **📊 Dashboard Utama (`index.php`)**: Live monitoring status baterai, status charging (⚡), sinyal WiFi, kurva spektral 8-kanal (415nm - 680nm), dan diagram kromatisitas CIE 1931 xy.
+- **🔍 Cek Detail Pengukuran (`detail.php`)**: Dual contrast preview (gelap & terang), konversi ruang warna sRGB, CIE xyY, CIE $L^*a^*b^*$, HSL, grafik batang 8 kanal spektral + NIR + Clear, parameter akuisisi sensor (LED mA, gain, averaging samples), serta catatan sampel yang dapat diedit.
+- **⚖️ Komparasi Warna & Analisis $\Delta E$ (`compare.php`)**: Komparasi 2 sampel berdampingan, perhitungan toleransi industri $\Delta E^*_{ab}$, serta kurva absorpsi spektrum komparatif.
+- **📡 Telemetri Alat & API (`device.php`)**: Status koneksi ESP32, live polling, dan simulasi pengujian API satu-klik.
+- **⚙️ Installer Server 1-Klik (`install.php`)**:
+  - Pemeriksaan otomatis kesiapan server (PHP $\ge 7.4$, PDO, izin tulis folder).
+  - Pilihan database **SQLite** (Zero-Config 1-Klik Selesai) atau **MySQL** (cPanel / Dedicated).
+  - Pengaturan zona waktu (WIT UTC+9, WITA UTC+8, WIB UTC+7) dan API Key.
+  - Proteksi pengunci instalasi (`installed.lock`).
+
+### Menjalankan Server Lokal:
+```bash
+cd web
+php -S 0.0.0.0:8080
+```
+Buka di browser: `http://localhost:8080/install.php` atau `http://localhost:8080/`
+
+### Integrasi Pengiriman Otomatis ESP32:
+Setiap kali tombol **Save** ditekan pada layar TFT alat saat terhubung ke WiFi, alat akan mengirimkan data pengukuran lengkap format JSON via HTTP POST ke endpoint:
+```
+POST http://<ip-server>:8080/api.php
+Header: X-API-KEY: colan_secret_2026
+```
+

@@ -17,6 +17,10 @@
     LED -> 3V3 (backlight selalu menyala)
            atau ke GPIO PIN_BL di bawah kalau ingin kecerahan bisa diatur
   Wiring AS7341:  VIN->3V3  GND->GND  SDA->GPIO33  SCL->GPIO35
+  Wiring Baterai & Cas (TP4056 + 18650):
+    - Tegangan Baterai 18650 : Bat(+) -> [1k ohm] -> GPIO1 -> [1k ohm] -> GND
+    - Deteksi Cas USB (TP4056): USB(+) -> [5k ohm] -> GPIO2 -> [1k ohm] -> GND
+    - GND TP4056 & Baterai   : terhubung ke GND ESP32
 
   Alur pemakaian:
     1. Pertama kali: kalibrasi touch (5 titik).
@@ -64,7 +68,7 @@
 #include <sys/time.h>
 #include <math.h>
 
-#define FW_VERSION "v1.1.0"
+#define FW_VERSION "v1.1.2"
 
 // ======================= OTA (GitHub Releases) =======================
 // Repo publik GitHub untuk OTA update
@@ -83,7 +87,10 @@
 #define PIN_BOOT   0
 #define AS_SDA     33
 #define AS_SCL     35
-#define PIN_BL     -1      // isi nomor GPIO kalau LED TFT disambung ke ESP32 (PWM). -1 = tidak dipakai
+#define PIN_BL     10      // Pin PWM kecerahan layar LED TFT (GPIO 10)
+#define PIN_BAT_ADC 1      // Pembaca tegangan baterai 18650 (pembagi tegangan 1K + 1K)
+#define PIN_CHG_DET 2      // Deteksi charger USB 5V TP4056 (pembagi tegangan 5K + 1K / 5K + 5K)
+#define BAT_DIVIDER_RATIO 2.0f // Faktor pembagi tegangan 1k + 1k (Vbat = Vpin * 2.0)
 
 // ======================= TIPE DATA (HARUS DI ATAS FUNGSI PERTAMA) =======================
 struct Rect { int16_t x, y, w, h; };
@@ -91,7 +98,13 @@ struct Rect { int16_t x, y, w, h; };
 enum Screen {
   S_BOOT, S_HOME, S_SAMPLE, S_PROCESS, S_RESULT, S_DETAIL,
   S_HISTORY, S_CALSENS, S_SETTINGS, S_TIME, S_ABOUT, S_CONFIRM,
-  S_WIFI, S_KEYB, S_OTA
+  S_WIFI, S_KEYB, S_OTA, S_BATCAL
+};
+
+struct BatConfig {
+  float vFull;    // Tegangan baterai penuh (100%), default 4.00V sesuai baterai user
+  float vEmpty;   // Tegangan baterai kosong (0%), default 3.30V
+  float calRatio; // Faktor pengali pembagi tegangan ADC (default 2.00)
 };
 
 struct Spectrum { float f[8]; float clr; float nir; };
@@ -196,6 +209,8 @@ const int HIST_MAX = 12;
 HistEntry hist[HIST_MAX];
 int histCount = 0;
 int histScroll = 0;
+int setScroll = 0;
+int pickerType = 0;     // 0: none, 1: Arus LED, 2: Gain, 3: Sampel, 4: Kecerahan
 
 int sampleMode = 0;     // 0 = Sample (LED), 1 = Manual (cahaya, LED mati)
 int calStep = 0;        // 0 dark, 1 white, 2 selesai
@@ -205,6 +220,7 @@ struct tm editTm;
 bool lastCancelled = false;
 char wifiSsid[33] = "";
 char wifiPass[64] = "";
+char webApiUrl[96] = "http://192.168.1.5:8080/api.php";
 
 // Tabel warna (dihitung saat boot)
 const float BAND_WL[8] = { 415, 445, 480, 515, 555, 590, 630, 680 };
@@ -286,6 +302,22 @@ void txtFitC(int cx, int cy, const char* s, uint16_t col, int maxW) {
   txtC(cx, cy, s, col, nullptr, 1);
 }
 
+int textW(const char* s, const GFXfont* f) {
+  tft.setFont(f);
+  tft.setTextSize(1);
+  int16_t bx, by;
+  uint16_t bw, bh;
+  tft.getTextBounds(s, 0, 0, &bx, &by, &bw, &bh);
+  tft.setFont(nullptr);
+  return bw;
+}
+
+// Salin teks dan potong dari belakang sampai muat di lebar maxW
+void fitStr(char* out, size_t n, const char* s, int maxW, const GFXfont* f) {
+  strlcpy(out, s, n);
+  while (strlen(out) > 1 && textW(out, f) > maxW) out[strlen(out) - 1] = 0;
+}
+
 void btn(const Rect &r, uint16_t col, const char* label, const GFXfont* f = F9B,
          uint16_t tcol = COL_TXT) {
   tft.fillRoundRect(r.x, r.y, r.w, r.h, 8, col);
@@ -306,14 +338,14 @@ void badge(int x, int y, int w, int h, const char* label, uint16_t col) {
 void timeStr(char* b, size_t n) {
   time_t t = time(nullptr);
   struct tm tmv;
-  gmtime_r(&t, &tmv);
+  localtime_r(&t, &tmv);
   snprintf(b, n, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
 }
 
 void dateStr(uint32_t ts, char* b, size_t n) {
   time_t t = ts;
   struct tm tmv;
-  gmtime_r(&t, &tmv);
+  localtime_r(&t, &tmv);
   snprintf(b, n, "%02d-%02d-%04d %02d:%02d", tmv.tm_mday, tmv.tm_mon + 1,
            tmv.tm_year + 1900, tmv.tm_hour, tmv.tm_min);
 }
@@ -345,12 +377,25 @@ void saveHist()  {
 }
 void saveEpoch() { prefs.putUInt("epoch", (uint32_t)time(nullptr)); }
 
+BatConfig batCfg = { 4.00f, 3.30f, 2.00f };
+
+void saveBatCfg() { saveBlob("batcfg", &batCfg, sizeof(batCfg)); }
+void loadBatCfg() {
+  if (!loadBlob("batcfg", &batCfg, sizeof(batCfg))) {
+    batCfg = { 4.00f, 3.30f, 2.00f };
+  }
+  if (batCfg.vFull < 3.70f || batCfg.vFull > 4.35f) batCfg.vFull = 4.00f;
+  if (batCfg.vEmpty < 2.90f || batCfg.vEmpty > 3.60f) batCfg.vEmpty = 3.30f;
+  if (batCfg.calRatio < 1.40f || batCfg.calRatio > 2.80f) batCfg.calRatio = 2.00f;
+}
+
 void loadAll() {
   if (!loadBlob("cfg", &cfg, sizeof(cfg))) cfg = { 0, 2, 2, 3 };
   if (cfg.ledIdx > 5 || cfg.gainIdx > 4 || cfg.nIdx > 3 || cfg.blIdx > 3) cfg = { 0, 2, 2, 3 };
   if (!loadBlob("tcal", &tcal, sizeof(tcal))) memset(&tcal, 0, sizeof(tcal));
   if (!loadBlob("scal", &sc, sizeof(sc))) memset(&sc, 0, sizeof(sc));
   if (!loadBlob("ref", &refc, sizeof(refc))) memset(&refc, 0, sizeof(refc));
+  loadBatCfg();
 
   histCount = prefs.getUChar("hn", 0);
   if (histCount > HIST_MAX) histCount = 0;
@@ -361,6 +406,8 @@ void loadAll() {
     String wp = prefs.getString("wpass", "");
     strlcpy(wifiSsid, ws.c_str(), sizeof(wifiSsid));
     strlcpy(wifiPass, wp.c_str(), sizeof(wifiPass));
+    String wu = prefs.getString("weburl", "http://192.168.1.5:8080/api.php");
+    strlcpy(webApiUrl, wu.c_str(), sizeof(webApiUrl));
   }
 
   uint32_t ep = prefs.getUInt("epoch", 1792065600UL);  // default 15-10-2026 12:00
@@ -440,9 +487,145 @@ void drawBars(int x, int yBottom, int lvl, uint16_t on) {
   }
 }
 
+// ======================= SISTEM BATERAI & CAS =======================
+float batVoltage      = 3.95f; // Tegangan baterai terukur di kutub (Volt)
+float batRawV         = 3.95f; // Tegangan instan ADC
+int   batPercent      = 79;    // Persentase baterai 0 - 100% yang ditampilkan
+float batPercentFloat = 79.0f; // Akumulator persentase halus
+bool  batCharging     = false; // Status charger terhubung
+bool  batLastCharge   = false;
+bool  batInitialized  = false;
+uint32_t lastBatCheck = 0;
+uint32_t lastPctUpdate = 0;
+
+// Konversi tegangan baterai ke persentase kapasitas riil (0 - 100%) menggunakan batCfg
+int calcBatPercent(float v) {
+  if (v >= batCfg.vFull) return 100;
+  if (v <= batCfg.vEmpty) return 0;
+  float range = batCfg.vFull - batCfg.vEmpty;
+  if (range < 0.2f) range = 0.7f;
+  float frac = (v - batCfg.vEmpty) / range;
+  int pct = (int)(frac * 100.0f + 0.5f);
+  if (pct > 100) pct = 100;
+  if (pct < 0) pct = 0;
+  return pct;
+}
+
+void readBatterySensors(bool force = false) {
+  // 1. Deteksi kabel charger USB 5V (5K + 1K menghasilkan ~833mV)
+  uint32_t chgMv = analogReadMilliVolts(PIN_CHG_DET);
+  batCharging = (chgMv > 450);
+
+  // 2. Baca tegangan baterai (1K + 1K) dengan 16x oversampling
+  uint32_t sumMv = 0;
+  for (int i = 0; i < 16; i++) {
+    sumMv += analogReadMilliVolts(PIN_BAT_ADC);
+    delayMicroseconds(50);
+  }
+  float pinMv = (float)sumMv / 16.0f;
+  batRawV = (pinMv * batCfg.calRatio) / 1000.0f;
+
+  if (force || !batInitialized) {
+    batVoltage = batRawV;
+    batInitialized = true;
+    float vInit = batVoltage;
+    if (batCharging) vInit -= 0.20f;
+    batPercent = calcBatPercent(vInit);
+    batPercentFloat = (float)batPercent;
+  } else {
+    // Low-pass filter halus untuk tegangan
+    batVoltage = batVoltage * 0.90f + batRawV * 0.10f;
+  }
+
+  // 3. Kompensasi tegangan saat dicas:
+  // Arus pengisian TP4056 menyebabkan kenaikan tegangan semu di kutub baterai (~0.20V).
+  // Kita kompensasikan agar persentase mencerminkan kapasitas asli sel kimia, bukan tegangan dorong cas.
+  float vCell = batVoltage;
+  if (batCharging) {
+    float chgLift = 0.20f;
+    if (batVoltage > batCfg.vFull) {
+      chgLift = 0.20f * (1.0f - (batVoltage - batCfg.vFull) / 0.15f);
+      if (chgLift < 0.02f) chgLift = 0.02f;
+    }
+    vCell = batVoltage - chgLift;
+    if (vCell < batCfg.vEmpty) vCell = batCfg.vEmpty;
+  }
+
+  int targetPct = calcBatPercent(vCell);
+
+  // 4. Damping / Rate Limiting (Mencegah lonjakan drastis saat colok/cabut)
+  uint32_t now = millis();
+  if (force) {
+    batPercentFloat = (float)targetPct;
+    batPercent = targetPct;
+  } else if (now - lastPctUpdate > 4000) {
+    lastPctUpdate = now;
+    if (targetPct > batPercent) {
+      batPercentFloat += 0.25f; // Naik bertahap saat diisi (~1% per 16 detik)
+      if (batPercentFloat > targetPct) batPercentFloat = (float)targetPct;
+    } else if (targetPct < batPercent) {
+      batPercentFloat -= 0.25f; // Turun bertahap saat dipakai
+      if (batPercentFloat < targetPct) batPercentFloat = (float)targetPct;
+    }
+    batPercent = (int)(batPercentFloat + 0.5f);
+    if (batPercent > 100) batPercent = 100;
+    if (batPercent < 0) batPercent = 0;
+  }
+}
+
+void drawLightning(int x, int y, uint16_t col) {
+  tft.fillTriangle(x + 5, y,      x,     y + 7,  x + 4, y + 7,  col);
+  tft.fillTriangle(x + 4, y + 6,  x + 8, y + 6,  x + 3, y + 13, col);
+  tft.fillTriangle(x + 2, y + 7,  x + 5, y + 6,  x + 4, y + 8,  col);
+}
+
+void drawHeaderBattery() {
+  // Bersihkan area baterai di header (X: 166 s/d 265, terisolasi penuh dari WiFi di X=138-162)
+  tft.fillRect(166, 4, 100, 22, COL_BG);
+
+  // Teks persentase (FreeSans 9pt, rata kanan di 216 sehingga selalu di kanan X=172, aman dari WiFi)
+  char b[8];
+  snprintf(b, sizeof(b), "%d%%", batPercent);
+  txt(216, 7, b, COL_TXT, F9, 1, 2);
+
+  // Logo petir kuning tegas di samping kiri bar baterai saat di-cas
+  if (batCharging) {
+    drawLightning(222, 7, COL_YELLOW);
+  }
+
+  // Bingkai baterai diperbesar (W=24, H=14) dengan rounded border ganda
+  int bx = 236, by = 7, bw = 24, bh = 14;
+  uint16_t frameCol = COL_LINE;
+  tft.drawRoundRect(bx, by, bw, bh, 3, frameCol);
+  tft.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 2, frameCol);
+  tft.fillRoundRect(bx + bw, by + 4, 3, bh - 8, 1, frameCol); // tip kutub (+)
+
+  // Isi bar baterai (warna murni sesuai persentase kapasitas, TANPA diubah saat di-cas)
+  int maxFill = bw - 6; // 18 px
+  int fillW = maxFill * batPercent / 100;
+  if (fillW < 2 && batPercent > 0) fillW = 2;
+  if (fillW > maxFill) fillW = maxFill;
+
+  uint16_t fillCol = COL_GREEN;
+  if (batPercent <= 20) fillCol = COL_RED;
+  else if (batPercent <= 50) fillCol = COL_ORANGE;
+
+  if (fillW > 0) {
+    tft.fillRect(bx + 3, by + 3, fillW, bh - 6, fillCol);
+  }
+}
+
+void drawHeaderClock() {
+  tft.fillRect(268, 4, 52, 22, COL_BG);
+  char b[8];
+  timeStr(b, sizeof(b));
+  txt(314, 7, b, COL_TXT, F9B, 1, 2);
+}
+
 void drawWifiIcon() {
+  tft.fillRect(138, 4, 24, 20, COL_BG);
   if (WiFi.status() != WL_CONNECTED) return;
-  drawBars(255, 20, rssiLevel(WiFi.RSSI()), COL_GREEN);
+  drawBars(140, 20, rssiLevel(WiFi.RSSI()), COL_GREEN);
 }
 
 void drawHeader(const char* title, bool back) {
@@ -455,11 +638,12 @@ void drawHeader(const char* title, bool back) {
     tft.drawLine(12, 13, 19, 19, COL_TXT);
     x = 28;
   }
-  txt(x, 6, title, COL_TXT, F9B);
+  char safeTitle[36];
+  fitStr(safeTitle, sizeof(safeTitle), title, 134 - x, F9B);
+  txt(x, 6, safeTitle, COL_TXT, F9B);
   drawWifiIcon();
-  char b[8];
-  timeStr(b, sizeof(b));
-  txt(312, 10, b, COL_MUTED, nullptr, 1, 2);
+  drawHeaderBattery();
+  drawHeaderClock();
   tft.drawFastHLine(0, 28, SCREEN_W, COL_LINE);
 }
 
@@ -781,16 +965,31 @@ void bootDraw(int pct, const char* msg) {
   if (first) {
     first = false;
     tft.fillScreen(COL_BG);
-    drawLogo(160, 62, 22);
-    txtC(160, 128, "Colorimetric Analyzer", COL_TXT, F12B);
-    tft.drawRoundRect(60, 168, 200, 10, 5, COL_LINE);
-    txt(160, 214, FW_VERSION, COL_MUTED, nullptr, 1, 1);
+    drawLogo(160, 50, 22);
+    txtC(160, 96, "Colorimetric Analyzer", COL_TXT, F12B);
+    txtC(160, 118, "Precision Spectral Sensor", COL_MUTED, F9);
+    // Bingkai progress bar
+    tft.drawRoundRect(40, 160, 240, 16, 8, COL_LINE);
+    tft.drawRoundRect(39, 159, 242, 18, 9, COL_CARD2);
+    txtC(160, 224, FW_VERSION, COL_MUTED, nullptr, 1);
   }
-  tft.fillRoundRect(61, 169, 198, 8, 4, COL_BG);
-  int w = 198 * pct / 100;
-  if (w > 0) tft.fillRoundRect(61, 169, w, 8, 4, COL_BLUE);
-  tft.fillRect(0, 184, SCREEN_W, 20, COL_BG);
-  txt(160, 188, msg, COL_TXT, F9, 1, 1);
+
+  // 1. Tampilkan persentase di atas bar dengan area yang DIBERSIHKAN TOTAL (tidak tumpang tindih)
+  tft.fillRect(100, 134, 120, 22, COL_BG);
+  char pb[12];
+  snprintf(pb, sizeof(pb), "%d%%", pct);
+  txtC(160, 145, pb, COL_TXT, F9B);
+
+  // 2. Isi bar persentase (biru cerah)
+  tft.fillRoundRect(42, 162, 236, 12, 6, COL_CARD);
+  int w = 236 * pct / 100;
+  if (w > 0) {
+    tft.fillRoundRect(42, 162, w, 12, 6, COL_BLUE);
+  }
+
+  // 3. Pesan status di bawah bar dengan area yang DIBERSIHKAN TOTAL
+  tft.fillRect(0, 184, SCREEN_W, 30, COL_BG);
+  txtC(160, 198, msg, COL_MUTED, F9);
 }
 
 // ======================= UI: HOME =======================
@@ -859,12 +1058,11 @@ void drawHomeStatus() {
 void drawHome() {
   tft.fillScreen(COL_BG);
   drawLogo(18, 14, 5);
-  txt(36, 6, "Colorimetric Analyzer", COL_TXT, F9B);
-  char b[8];
-  timeStr(b, sizeof(b));
-  txt(312, 10, b, COL_MUTED, nullptr, 1, 2);
-  tft.drawFastHLine(0, 28, SCREEN_W, COL_LINE);
+  txt(34, 6, "Colorimeter", COL_TXT, F9B);
   drawWifiIcon();
+  drawHeaderBattery();
+  drawHeaderClock();
+  tft.drawFastHLine(0, 28, SCREEN_W, COL_LINE);
 
   static const char* T1[6] = { "Analisis", "Kalibrasi", "Kalibrasi", "Riwayat", "Pengaturan", "Tentang" };
   static const char* T2[6] = { "Ukur warna", "Sensor AS7341", "Layar touch", "Data tersimpan", "Sistem", FW_VERSION };
@@ -953,7 +1151,7 @@ void cieDiagram(int x0, int y0, int w, int h, float px, float py) {
 
 void drawResult() {
   tft.fillScreen(COL_BG);
-  drawHeader("Hasil Pembacaan Warna", true);
+  drawHeader("Hasil Warna", true);
 
   // Warna sampel
   card(7, 34, 146, 84);
@@ -1134,7 +1332,7 @@ void drawLabTab() {
 
 void drawDetail() {
   tft.fillScreen(COL_BG);
-  drawHeader("Hasil Analisis (Detail)", true);
+  drawHeader("Detail Hasil", true);
   const char* tn[4] = { "Spektrum", "CIE 1931", "RGB", "Lab" };
   for (int i = 0; i < 4; i++) {
     Rect t = tabRect(i);
@@ -1210,7 +1408,7 @@ const Rect R_CS_FOOT = { 0, 220, 120, 20 };
 
 void drawCalSens() {
   tft.fillScreen(COL_BG);
-  drawHeader("Kalibrasi Sensor AS7341", true);
+  drawHeader("Kalibrasi Sensor", true);
   const char* tn[3] = { "1. Dark", "2. White", "3. Finish" };
   for (int i = 0; i < 3; i++) {
     int x = 4 + i * 106;
@@ -1308,22 +1506,6 @@ void calWhite() {
 }
 
 // ======================= WIFI: UTILITAS =======================
-int textW(const char* s, const GFXfont* f) {
-  tft.setFont(f);
-  tft.setTextSize(1);
-  int16_t bx, by;
-  uint16_t bw, bh;
-  tft.getTextBounds(s, 0, 0, &bx, &by, &bw, &bh);
-  tft.setFont(nullptr);
-  return bw;
-}
-
-// Salin teks dan potong dari belakang sampai muat di lebar maxW
-void fitStr(char* out, size_t n, const char* s, int maxW, const GFXfont* f) {
-  strlcpy(out, s, n);
-  while (strlen(out) > 1 && textW(out, f) > maxW) out[strlen(out) - 1] = 0;
-}
-
 bool wifiUp() { return WiFi.status() == WL_CONNECTED; }
 
 void wifiMsgBox(const char* msg) {
@@ -1847,14 +2029,98 @@ void otaTap(int x, int y) {
 }
 
 // ======================= UI: PENGATURAN =======================
-Rect setRow(int i) { return Rect{ 7, (int16_t)(34 + i * 25), 306, 23 }; }
+const int SET_COUNT = 9;
+const int SET_PAGE_ROWS = 4;
+Rect setRow(int i) { return Rect{ 8, (int16_t)(34 + i * 42), 292, 38 }; }
+const Rect R_SET_UP = { 8, 204, 76, 30 };
+const Rect R_SET_DN = { 224, 204, 76, 30 };
+const Rect R_PICKER_MODAL = { 18, 22, 284, 196 };
+const Rect R_PICKER_CANCEL = { 80, 164, 160, 30 };
+
+Rect pickerOptRect(int type, int j) {
+  if (type == 1 || type == 2) {
+    if (type == 2 && j == 4) {
+      return Rect{ 97, 126, 126, 28 };
+    }
+    int col = j % 2;
+    int row = j / 2;
+    int16_t x = (col == 0) ? 28 : 166;
+    int16_t y = 58 + row * 34;
+    return Rect{ x, y, 126, 28 };
+  } else {
+    int col = j % 2;
+    int row = j / 2;
+    int16_t x = (col == 0) ? 28 : 166;
+    int16_t y = 64 + row * 46;
+    return Rect{ x, y, 126, 38 };
+  }
+}
+
+void drawPickerModal() {
+  // Modal background box
+  tft.fillRoundRect(R_PICKER_MODAL.x, R_PICKER_MODAL.y, R_PICKER_MODAL.w, R_PICKER_MODAL.h, 10, COL_CARD2);
+  tft.drawRoundRect(R_PICKER_MODAL.x, R_PICKER_MODAL.y, R_PICKER_MODAL.w, R_PICKER_MODAL.h, 10, COL_BLUE);
+  tft.drawRoundRect(R_PICKER_MODAL.x + 1, R_PICKER_MODAL.y + 1, R_PICKER_MODAL.w - 2, R_PICKER_MODAL.h - 2, 9, COL_BLUE);
+
+  // Modal header
+  tft.fillRoundRect(R_PICKER_MODAL.x + 4, R_PICKER_MODAL.y + 4, R_PICKER_MODAL.w - 8, 26, 6, COL_BG);
+  const char* title = "";
+  if (pickerType == 1) title = "Pilih Arus LED";
+  else if (pickerType == 2) title = "Pilih Gain Sensor";
+  else if (pickerType == 3) title = "Pilih Sampel";
+  else if (pickerType == 4) title = "Pilih Kecerahan";
+  txtC(160, 39, title, COL_TXT, F9B);
+
+  // Options
+  if (pickerType == 1) {
+    for (int j = 0; j < 6; j++) {
+      Rect r = pickerOptRect(1, j);
+      bool sel = (cfg.ledIdx == j);
+      tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_BLUE : COL_CARD);
+      tft.drawRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_TXT : COL_LINE);
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%d mA", LED_OPTS[j]);
+      txtC(r.x + r.w / 2, r.y + r.h / 2, buf, COL_TXT, sel ? F9B : F9);
+    }
+  } else if (pickerType == 2) {
+    for (int j = 0; j < 5; j++) {
+      Rect r = pickerOptRect(2, j);
+      bool sel = (cfg.gainIdx == j);
+      tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_BLUE : COL_CARD);
+      tft.drawRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_TXT : COL_LINE);
+      txtC(r.x + r.w / 2, r.y + r.h / 2, GAIN_TXT[j], COL_TXT, sel ? F9B : F9);
+    }
+  } else if (pickerType == 3) {
+    const char* nLabels[4] = { "1 (Cepat)", "3 (Normal)", "5 (Standar)", "10 (Akurat)" };
+    for (int j = 0; j < 4; j++) {
+      Rect r = pickerOptRect(3, j);
+      bool sel = (cfg.nIdx == j);
+      tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_BLUE : COL_CARD);
+      tft.drawRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_TXT : COL_LINE);
+      txtC(r.x + r.w / 2, r.y + r.h / 2, nLabels[j], COL_TXT, sel ? F9B : F9);
+    }
+  } else if (pickerType == 4) {
+    const char* blLabels[4] = { "25% (Hemat)", "50% (Sedang)", "75% (Terang)", "100% (Maks)" };
+    for (int j = 0; j < 4; j++) {
+      Rect r = pickerOptRect(4, j);
+      bool sel = (cfg.blIdx == j);
+      tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_BLUE : COL_CARD);
+      tft.drawRoundRect(r.x, r.y, r.w, r.h, 6, sel ? COL_TXT : COL_LINE);
+      txtC(r.x + r.w / 2, r.y + r.h / 2, blLabels[j], COL_TXT, sel ? F9B : F9);
+    }
+  }
+
+  // Tombol Batal
+  btn(R_PICKER_CANCEL, COL_CARD, "Batal", F9, COL_TXT);
+  tft.drawRoundRect(R_PICKER_CANCEL.x, R_PICKER_CANCEL.y, R_PICKER_CANCEL.w, R_PICKER_CANCEL.h, 8, COL_LINE);
+}
 
 void drawSettings() {
   tft.fillScreen(COL_BG);
   drawHeader("Pengaturan", true);
-  const char* lb[8] = { "Arus LED sensor", "Gain sensor", "Jumlah sampel", "Kecerahan layar",
-                        "Tanggal & Waktu", "WiFi", "Update Firmware (OTA)", "Reset Pabrik" };
-  char v[8][34];
+  const char* lb[9] = { "Arus LED sensor", "Gain sensor", "Jumlah sampel", "Kecerahan layar",
+                        "Kalibrasi Baterai", "Tanggal & Waktu", "WiFi", "Update Firmware (OTA)", "Reset Pabrik" };
+  char v[9][34];
   snprintf(v[0], 20, "%d mA", LED_OPTS[cfg.ledIdx]);
   snprintf(v[1], 20, "%s", GAIN_TXT[cfg.gainIdx]);
   snprintf(v[2], 20, "%d", N_OPTS[cfg.nIdx]);
@@ -1863,24 +2129,168 @@ void drawSettings() {
 #else
   snprintf(v[3], 20, "tetap");
 #endif
+  snprintf(v[4], 20, "%.2fV (%d%%)", batVoltage, batPercent);
+
   char tb[20];
   time_t t = time(nullptr);
   struct tm tmv;
-  gmtime_r(&t, &tmv);
+  localtime_r(&t, &tmv);
   snprintf(tb, sizeof(tb), "%02d-%02d-%04d", tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_year + 1900);
-  snprintf(v[4], 34, "%s", tb);
-  if (wifiUp()) fitStr(v[5], 34, WiFi.SSID().c_str(), 110, F9);
-  else snprintf(v[5], 34, "Tidak terhubung");
-  snprintf(v[6], 34, "%s", FW_VERSION);
-  v[7][0] = 0;
+  snprintf(v[5], 34, "%s (WIT)", tb);
+  if (wifiUp()) fitStr(v[6], 34, WiFi.SSID().c_str(), 110, F9);
+  else snprintf(v[6], 34, "Tidak terhubung");
+  snprintf(v[7], 34, "%s", FW_VERSION);
+  v[8][0] = 0;
 
-  for (int i = 0; i < 8; i++) {
+  // Render 4 baris yang sedang aktif sesuai scroll
+  for (int i = 0; i < SET_PAGE_ROWS; i++) {
+    int idx = setScroll + i;
+    if (idx >= SET_COUNT) break;
     Rect r = setRow(i);
-    tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, COL_CARD);
-    txt(r.x + 10, r.y + 5, lb[i], i == 7 ? COL_RED : COL_TXT, F9);
-    if (v[i][0]) txt(r.x + 280, r.y + 5, v[i], COL_MUTED, F9, 1, 2);
-    tft.drawLine(r.x + 290, r.y + 6, r.x + 296, r.y + 11, COL_MUTED);
-    tft.drawLine(r.x + 296, r.y + 11, r.x + 290, r.y + 16, COL_MUTED);
+    tft.fillRoundRect(r.x, r.y, r.w, r.h, 8, COL_CARD);
+    tft.drawRoundRect(r.x, r.y, r.w, r.h, 8, COL_LINE);
+    txt(r.x + 12, r.y + 11, lb[idx], idx == 8 ? COL_RED : COL_TXT, F9);
+    if (v[idx][0]) {
+      uint16_t valCol = (idx <= 3) ? COL_BLUE : COL_MUTED;
+      txt(r.x + 264, r.y + 11, v[idx], valCol, F9, 1, 2);
+    }
+    // Chevron >
+    tft.drawLine(r.x + 276, r.y + 13, r.x + 282, r.y + 19, COL_MUTED);
+    tft.drawLine(r.x + 282, r.y + 19, r.x + 276, r.y + 25, COL_MUTED);
+  }
+
+  // Indikator Scrollbar di sisi kanan
+  tft.fillRoundRect(304, 34, 8, 164, 4, COL_CARD);
+  tft.drawRoundRect(304, 34, 8, 164, 4, COL_LINE);
+  int thumbH = 44;
+  int thumbY = 34 + (setScroll * (164 - thumbH)) / (SET_COUNT - SET_PAGE_ROWS);
+  tft.fillRoundRect(305, thumbY, 6, thumbH, 3, COL_BLUE);
+
+  // Tombol navigasi bawah (Naik / Turun)
+  btn(R_SET_UP, setScroll > 0 ? COL_CARD2 : COL_CARD, "Naik", F9, setScroll > 0 ? COL_TXT : COL_MUTED);
+  if (setScroll == 0) tft.drawRoundRect(R_SET_UP.x, R_SET_UP.y, R_SET_UP.w, R_SET_UP.h, 8, COL_LINE);
+
+  btn(R_SET_DN, setScroll < (SET_COUNT - SET_PAGE_ROWS) ? COL_CARD2 : COL_CARD, "Turun", F9,
+      setScroll < (SET_COUNT - SET_PAGE_ROWS) ? COL_TXT : COL_MUTED);
+  if (setScroll >= (SET_COUNT - SET_PAGE_ROWS)) {
+    tft.drawRoundRect(R_SET_DN.x, R_SET_DN.y, R_SET_DN.w, R_SET_DN.h, 8, COL_LINE);
+  }
+
+  // Teks indikator jumlah item
+  char ind[24];
+  snprintf(ind, sizeof(ind), "%d-%d dari 9", setScroll + 1, min(9, setScroll + 4));
+  txtC(150, 219, ind, COL_MUTED, F9);
+
+  // Jika modal picker sedang aktif, tampilkan di atas
+  if (pickerType != 0) {
+    drawPickerModal();
+  }
+}
+
+// ======================= UI: KALIBRASI BATERAI =======================
+const Rect R_BC_FULL_M = { 170, 94, 38, 26 };
+const Rect R_BC_FULL_P = { 260, 94, 38, 26 };
+const Rect R_BC_LOCK   = { 16, 126, 288, 24 };
+const Rect R_BC_CAL_M  = { 170, 156, 38, 26 };
+const Rect R_BC_CAL_P  = { 260, 156, 38, 26 };
+const Rect R_BC_SAVE   = { 20, 196, 280, 36 };
+
+void drawBatCal() {
+  tft.fillScreen(COL_BG);
+  drawHeader("Kalibrasi Baterai", true);
+
+  // Kartu 1: Status Terkini
+  card(7, 32, 306, 54);
+  txt(16, 38, "Voltase Terbaca:", COL_MUTED, F9);
+  char bv[16];
+  snprintf(bv, sizeof(bv), "%.2f V", batVoltage);
+  txt(150, 38, bv, COL_TXT, F9B);
+
+  const char* st = batCharging ? (batPercent >= 99 ? "[Penuh]" : "[Di-cas]") : "[Baterai]";
+  uint16_t sc = batCharging ? COL_YELLOW : COL_GREEN;
+  txt(300, 38, st, sc, F9, 1, 2);
+
+  txt(16, 60, "Kapasitas Terhitung:", COL_MUTED, nullptr);
+  char bp[16];
+  snprintf(bp, sizeof(bp), "%d%%", batPercent);
+  txt(150, 60, bp, COL_GREEN, F9B);
+
+  // Kartu 2: Pengaturan Tegangan Penuh (100%)
+  card(7, 90, 306, 64);
+  txt(16, 98, "Penuh (100%):", COL_TXT, F9);
+  btn(R_BC_FULL_M, COL_CARD2, "-", F9B);
+  char vf[12];
+  snprintf(vf, sizeof(vf), "%.2fV", batCfg.vFull);
+  txtC(234, 107, vf, COL_YELLOW, F9B);
+  btn(R_BC_FULL_P, COL_CARD2, "+", F9B);
+
+  btn(R_BC_LOCK, COL_BLUE, "Kunci Voltase Sekarang = 100%", nullptr);
+
+  // Kartu 3: Kalibrasi Pengali ADC Multimeter
+  card(7, 158, 306, 34);
+  txt(16, 166, "Faktor ADC (Multimeter):", COL_TXT, nullptr);
+  btn(R_BC_CAL_M, COL_CARD2, "-", F9B);
+  char cr[12];
+  snprintf(cr, sizeof(cr), "%.2f", batCfg.calRatio);
+  txtC(234, 169, cr, COL_TXT, F9B);
+  btn(R_BC_CAL_P, COL_CARD2, "+", F9B);
+
+  btn(R_BC_SAVE, COL_GREEN, "Simpan Kalibrasi", F9B);
+}
+
+void batCalTap(int x, int y) {
+  if (hit(R_BACK, x, y)) { goScreen(S_SETTINGS); return; }
+
+  // Kurangi VFull
+  if (hit(R_BC_FULL_M, x, y)) {
+    batCfg.vFull -= 0.02f;
+    if (batCfg.vFull < 3.70f) batCfg.vFull = 3.70f;
+    batPercent = calcBatPercent(batVoltage);
+    drawBatCal();
+    return;
+  }
+  // Tambah VFull
+  if (hit(R_BC_FULL_P, x, y)) {
+    batCfg.vFull += 0.02f;
+    if (batCfg.vFull > 4.30f) batCfg.vFull = 4.30f;
+    batPercent = calcBatPercent(batVoltage);
+    drawBatCal();
+    return;
+  }
+  // Kunci tegangan saat ini sebagai 100% (Instant 1-Touch Calibration!)
+  if (hit(R_BC_LOCK, x, y)) {
+    readBatterySensors(true);
+    batCfg.vFull = batVoltage;
+    batPercent = 100;
+    batPercentFloat = 100.0f;
+    saveBatCfg();
+    drawBatCal();
+    toast("Terkunci: Baterai ini = 100%", COL_GREEN);
+    return;
+  }
+  // Kurangi faktor ADC
+  if (hit(R_BC_CAL_M, x, y)) {
+    batCfg.calRatio -= 0.02f;
+    if (batCfg.calRatio < 1.50f) batCfg.calRatio = 1.50f;
+    readBatterySensors(true);
+    drawBatCal();
+    return;
+  }
+  // Tambah faktor ADC
+  if (hit(R_BC_CAL_P, x, y)) {
+    batCfg.calRatio += 0.02f;
+    if (batCfg.calRatio > 2.60f) batCfg.calRatio = 2.60f;
+    readBatterySensors(true);
+    drawBatCal();
+    return;
+  }
+  // Simpan
+  if (hit(R_BC_SAVE, x, y)) {
+    saveBatCfg();
+    readBatterySensors(true);
+    toast("Kalibrasi Baterai Tersimpan", COL_GREEN);
+    goScreen(S_SETTINGS);
+    return;
   }
 }
 
@@ -1944,7 +2354,7 @@ void drawAbout() {
   txt(160, 80, "Colorimetric Analyzer", COL_TXT, F9B, 1, 1);
   card(40, 102, 240, 108);
   const char* k[6] = { "Hardware", "Firmware", "Sensor", "Display", "MCU", "Dibuat oleh" };
-  const char* v[6] = { "v1.0", FW_VERSION, "AS7341", "ILI9341 (3.2\")", "ESP32-S2", "Shawir" };
+  const char* v[6] = { "v1.0", FW_VERSION, "AS7341", "ILI9341 (3.2\")", "ESP32-S2", "Mushawir " };
   for (int i = 0; i < 6; i++) {
     int y = 108 + i * 16;
     txt(54, y, k[i], COL_MUTED, F9);
@@ -1988,11 +2398,13 @@ void redrawScreen() {
     case S_WIFI:     drawWifi(); break;
     case S_KEYB:     drawKeyboard(); break;
     case S_OTA:      drawOta(); break;
+    case S_BATCAL:   drawBatCal(); break;
     default: break;
   }
 }
 
 void goScreen(Screen s) {
+  if (s == S_SETTINGS) pickerType = 0;
   scr = s;
   redrawScreen();
 }
@@ -2099,6 +2511,49 @@ void touchCalFinishScreen() {
   waitRelease();
 }
 
+// ======================= PENGIRIMAN WEB API =======================
+bool uploadResultToWeb(const Result &r) {
+  if (WiFi.status() != WL_CONNECTED || webApiUrl[0] == 0) return false;
+
+  HTTPClient http;
+  if (!http.begin(webApiUrl)) return false;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-KEY", "colan_secret_2026");
+  http.setTimeout(3500);
+
+  char payload[512];
+  char dateBuf[32];
+  dateStr(r.ts, dateBuf, sizeof(dateBuf));
+
+  snprintf(payload, sizeof(payload),
+    "{\"sample_name\":\"Sampel %s\","
+    "\"hex\":\"#%02X%02X%02X\","
+    "\"r\":%d,\"g\":%d,\"b\":%d,"
+    "\"cie_x\":%.4f,\"cie_y\":%.4f,\"cie_z\":%.4f,"
+    "\"lab_l\":%.2f,\"lab_a\":%.2f,\"lab_b\":%.2f,"
+    "\"de\":%.2f,\"is_relative\":%d,"
+    "\"spectrum\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],"
+    "\"nir\":%.2f,\"clear\":%.2f,"
+    "\"led_ma\":%d,\"gain\":\"%s\",\"samples\":%d,"
+    "\"device_id\":\"ESP32S2_COLORIMETER\","
+    "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d}",
+    dateBuf,
+    r.rr, r.gg, r.bb,
+    r.rr, r.gg, r.bb,
+    r.cx, r.cy, (1.0f - r.cx - r.cy),
+    r.L, r.a, r.b,
+    r.hasDE ? r.dE : 0.0f, r.relative ? 1 : 0,
+    r.R[0], r.R[1], r.R[2], r.R[3], r.R[4], r.R[5], r.R[6], r.R[7],
+    r.nir, r.clr,
+    LED_OPTS[cfg.ledIdx], GAIN_TXT[cfg.gainIdx], N_OPTS[cfg.nIdx],
+    batVoltage, batPercent, batCharging ? 1 : 0, WiFi.RSSI()
+  );
+
+  int code = http.POST(payload);
+  http.end();
+  return (code >= 200 && code < 300);
+}
+
 // ======================= AKSI =======================
 void saveCurrent() {
   if (!hasCur) return;
@@ -2113,7 +2568,17 @@ void saveCurrent() {
   saveHist();
   saveEpoch();
   cur.saved = true;
-  toast("Tersimpan ke riwayat", COL_GREEN);
+
+  bool webOk = false;
+  if (wifiUp()) {
+    webOk = uploadResultToWeb(cur);
+  }
+
+  if (webOk) {
+    toast("Tersimpan & Diunggah ke Web!", COL_GREEN);
+  } else {
+    toast("Tersimpan ke riwayat", COL_GREEN);
+  }
 }
 
 void setReference() {
@@ -2162,6 +2627,24 @@ void startAnalysis() {
 
 // ======================= PENANGANAN SENTUHAN =======================
 void handleTap(int x, int y) {
+  // Ketuk area baterai di header untuk info detail voltase & status cas
+  if (x >= 166 && x <= 265 && y <= 28 && scr != S_BOOT && scr != S_KEYB && scr != S_CONFIRM) {
+    char msg[48];
+    readBatterySensors(true);
+    const char* st = batCharging ? (batPercent >= 99 ? "[Penuh]" : "[Mengisi]") : "";
+    snprintf(msg, sizeof(msg), "Baterai: %.2fV (%d%%) %s", batVoltage, batPercent, st);
+    toast(msg, batCharging ? (batPercent >= 99 ? COL_GREEN : COL_YELLOW) : COL_BLUE);
+    return;
+  }
+  // Ketuk jam di header untuk info tanggal & waktu lengkap (WIT)
+  if (x >= 268 && x <= 320 && y <= 28 && scr != S_BOOT && scr != S_KEYB && scr != S_CONFIRM) {
+    char msg[48];
+    dateStr(time(nullptr), msg, sizeof(msg));
+    strlcat(msg, " WIT", sizeof(msg));
+    toast(msg, COL_CARD2);
+    return;
+  }
+
   switch (scr) {
     case S_HOME:
       for (int i = 0; i < 6; i++) {
@@ -2175,7 +2658,7 @@ void handleTap(int x, int y) {
             goScreen(S_HOME);
             break;
           case 3: histScroll = 0; goScreen(S_HISTORY); break;
-          case 4: goScreen(S_SETTINGS); break;
+          case 4: setScroll = 0; pickerType = 0; goScreen(S_SETTINGS); break;
           case 5: goScreen(S_ABOUT); break;
         }
         return;
@@ -2245,32 +2728,103 @@ void handleTap(int x, int y) {
       break;
 
     case S_SETTINGS:
+      if (pickerType != 0) {
+        if (hit(R_PICKER_CANCEL, x, y) || !hit(R_PICKER_MODAL, x, y)) {
+          pickerType = 0;
+          drawSettings();
+          break;
+        }
+        if (pickerType == 1) {
+          for (int j = 0; j < 6; j++) {
+            if (hit(pickerOptRect(1, j), x, y)) {
+              cfg.ledIdx = j;
+              saveCfg();
+              pickerType = 0;
+              drawSettings();
+              break;
+            }
+          }
+        } else if (pickerType == 2) {
+          for (int j = 0; j < 5; j++) {
+            if (hit(pickerOptRect(2, j), x, y)) {
+              cfg.gainIdx = j;
+              saveCfg();
+              applySensor();
+              pickerType = 0;
+              drawSettings();
+              break;
+            }
+          }
+        } else if (pickerType == 3) {
+          for (int j = 0; j < 4; j++) {
+            if (hit(pickerOptRect(3, j), x, y)) {
+              cfg.nIdx = j;
+              saveCfg();
+              pickerType = 0;
+              drawSettings();
+              break;
+            }
+          }
+        } else if (pickerType == 4) {
+          for (int j = 0; j < 4; j++) {
+            if (hit(pickerOptRect(4, j), x, y)) {
+              cfg.blIdx = j;
+              saveCfg();
+              applyBacklight();
+              pickerType = 0;
+              drawSettings();
+              break;
+            }
+          }
+        }
+        break;
+      }
+
       if (hit(R_BACK, x, y)) { goScreen(S_HOME); break; }
-      for (int i = 0; i < 8; i++) {
+      if (hit(R_SET_UP, x, y)) {
+        if (setScroll > 0) { setScroll--; drawSettings(); }
+        break;
+      }
+      if (hit(R_SET_DN, x, y)) {
+        if (setScroll < (SET_COUNT - SET_PAGE_ROWS)) { setScroll++; drawSettings(); }
+        break;
+      }
+      if (x >= 300 && x <= 320 && y >= 34 && y <= 198) {
+        int target = ((y - 34) * (SET_COUNT - SET_PAGE_ROWS + 1)) / 164;
+        target = constrain(target, 0, SET_COUNT - SET_PAGE_ROWS);
+        if (target != setScroll) {
+          setScroll = target;
+          drawSettings();
+        }
+        break;
+      }
+
+      for (int i = 0; i < SET_PAGE_ROWS; i++) {
+        int idx = setScroll + i;
+        if (idx >= SET_COUNT) break;
         if (!hit(setRow(i), x, y)) continue;
-        switch (i) {
-          case 0: cfg.ledIdx = (cfg.ledIdx + 1) % 6; saveCfg(); break;
-          case 1: cfg.gainIdx = (cfg.gainIdx + 1) % 5; saveCfg(); applySensor(); break;
-          case 2: cfg.nIdx = (cfg.nIdx + 1) % 4; saveCfg(); break;
+        switch (idx) {
+          case 0: pickerType = 1; drawSettings(); return;
+          case 1: pickerType = 2; drawSettings(); return;
+          case 2: pickerType = 3; drawSettings(); return;
           case 3:
 #if PIN_BL >= 0
-            cfg.blIdx = (cfg.blIdx + 1) % 4; saveCfg(); applyBacklight();
+            pickerType = 4; drawSettings(); return;
 #else
             toast("Sambung LED TFT ke GPIO, set PIN_BL");
             return;
 #endif
-            break;
-          case 4: {
+          case 4: goScreen(S_BATCAL); return;
+          case 5: {
             time_t t = time(nullptr);
-            gmtime_r(&t, &editTm);
+            localtime_r(&t, &editTm);
             goScreen(S_TIME);
             return;
           }
-          case 5: wifiEnter(); return;
-          case 6: otaEnter(); return;
-          case 7: confirmAction = 0; goScreen(S_CONFIRM); return;
+          case 6: wifiEnter(); return;
+          case 7: otaEnter(); return;
+          case 8: confirmAction = 0; goScreen(S_CONFIRM); return;
         }
-        drawSettings();
         break;
       }
       break;
@@ -2319,6 +2873,10 @@ void handleTap(int x, int y) {
       }
       break;
 
+    case S_BATCAL:
+      batCalTap(x, y);
+      break;
+
     default: break;
   }
 }
@@ -2326,8 +2884,10 @@ void handleTap(int x, int y) {
 // ======================= SETUP & LOOP =======================
 void setup() {
   Serial.begin(115200);
-  delay(300);
   pinMode(PIN_BOOT, INPUT_PULLUP);
+  pinMode(PIN_BAT_ADC, INPUT);
+  pinMode(PIN_CHG_DET, INPUT);
+  analogReadResolution(12);
 
   SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, -1);
   tft.begin(40000000);        // turunkan ke 20000000 jika layar glitch
@@ -2337,35 +2897,58 @@ void setup() {
   ts.begin();
   ts.setRotation(0);
 
-  bootDraw(5, "Memulai...");
+  // 1. Memulai sistem (~0.8s)
+  bootDraw(10, "Memulai sistem...");
+  delay(800);
 
+  // 2. Memuat preferensi & kalibrasi (~0.9s)
   prefs.begin("colan", false);
-  bootDraw(15, "Memuat pengaturan");
   loadAll();
+  readBatterySensors(true);
+  batLastCharge = batCharging;
 #if PIN_BL >= 0
   ledcAttach(PIN_BL, 5000, 8);
   applyBacklight();
 #endif
+  bootDraw(25, "Memuat preferensi...");
+  delay(900);
+
+  // 3. Konfigurasi Waktu & NTP (Timezone WIT = UTC+9) (~0.9s)
+  configTime(9 * 3600, 0, "pool.ntp.org", "id.pool.ntp.org", "time.google.com");
+  setenv("TZ", "WIT-9", 1);
+  tzset();
 
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   if (wifiSsid[0]) WiFi.begin(wifiSsid, wifiPass);   // sambung otomatis di latar belakang
+  bootDraw(45, "Sinkronisasi WiFi & Waktu (WIT)...");
+  delay(900);
 
-  bootDraw(35, "Menyiapkan sensor AS7341");
+  // 4. Sensor AS7341 (~1.0s)
+  bootDraw(65, "Menghubungkan sensor AS7341...");
   Wire.begin(AS_SDA, AS_SCL);
   Wire.setClock(400000);
   sensorOk = as7341.begin();
   applySensor();
   Serial.println(sensorOk ? "AS7341 OK" : "AS7341 TIDAK terdeteksi");
+  delay(1000);
 
-  bootDraw(65, "Menyiapkan tabel warna");
+  // 5. Tabel warna CIE 1931 (~0.9s)
+  bootDraw(80, "Inisialisasi tabel CIE 1931...");
   initColorTables();
+  delay(900);
 
-  bootDraw(85, "Memeriksa kalibrasi");
-  delay(250);
-  bootDraw(100, "Siap");
-  delay(400);
+  // 6. Diagnostik baterai & charger (~0.8s)
+  readBatterySensors(true);
+  char batMsg[40];
+  snprintf(batMsg, sizeof(batMsg), "Baterai: %.2fV (%d%%)%s", batVoltage, batPercent, batCharging ? " [Cas]" : "");
+  bootDraw(92, batMsg);
+  delay(800);
+
+  // 7. Selesai & siap digunakan (~0.7s) -> Total tepat 6.0 detik!
+  bootDraw(100, "Sistem Siap Digunakan");
+  delay(700);
 
   if (digitalRead(PIN_BOOT) == LOW || !tcal.valid) {
     runTouchCal(false);
@@ -2396,14 +2979,60 @@ void loop() {
     down = false;
   }
 
-  // Jam di header Home diperbarui tiap menit
-  static uint32_t lastMin = 0;
-  if (scr == S_HOME && now - lastMin > 30000) {
-    lastMin = now;
-    char b[8];
-    timeStr(b, sizeof(b));
-    tft.fillRect(270, 4, 46, 20, COL_BG);
-    txt(312, 10, b, COL_MUTED, nullptr, 1, 2);
+  // Jam di header diperbarui berkala tiap 10 detik
+  static uint32_t lastClockUpdate = 0;
+  if (now - lastClockUpdate > 10000) {
+    lastClockUpdate = now;
+    if (scr != S_BOOT && scr != S_PROCESS && scr != S_KEYB) {
+      drawHeaderClock();
+    }
+  }
+
+  // Sinkronisasi otomatis waktu via NTP ketika WiFi terhubung (Zona Waktu WIT)
+  static bool ntpSynced = false;
+  static wl_status_t lastWifiSt = WL_DISCONNECTED;
+  wl_status_t curWifiSt = WiFi.status();
+  if (curWifiSt != lastWifiSt) {
+    lastWifiSt = curWifiSt;
+    if (curWifiSt == WL_CONNECTED) {
+      configTime(9 * 3600, 0, "pool.ntp.org", "id.pool.ntp.org", "time.google.com");
+    }
+    if (scr != S_BOOT && scr != S_PROCESS) {
+      drawWifiIcon();
+    }
+  }
+  if (curWifiSt == WL_CONNECTED && !ntpSynced) {
+    time_t tnow = time(nullptr);
+    struct tm tmv;
+    localtime_r(&tnow, &tmv);
+    if (tmv.tm_year >= (2025 - 1900)) {
+      ntpSynced = true;
+      saveEpoch();
+      if (scr != S_BOOT && scr != S_PROCESS && scr != S_KEYB) {
+        drawHeaderClock();
+      }
+    }
+  }
+
+  // Periksa baterai & status cas secara berkala
+  static uint32_t lastBatLoop = 0;
+  if (now - lastBatLoop > 1500) {
+    lastBatLoop = now;
+    bool prevCharge = batCharging;
+    int  prevPct    = batPercent;
+    readBatterySensors(false);
+
+    // Notifikasi pop-up saat kabel cas dicolok / dilepas
+    if (batCharging != prevCharge) {
+      batLastCharge = batCharging;
+      if (batCharging) {
+        toast("Sedang Mengisi Daya...", COL_GREEN);
+      } else {
+        toast("Kabel Cas Dilepas", COL_ORANGE);
+      }
+    } else if (batPercent != prevPct && scr != S_BOOT && scr != S_PROCESS) {
+      drawHeaderBattery();
+    }
   }
   delay(5);
 }

@@ -3,3 +3,13 @@ build/
 build_release/
 *.elf
 .DS_Store
+
+# Backup files
+*copy*.ino
+*copy*
+
+# Web Database & Locks
+web/data/*.db
+web/data/*.db-journal
+web/data/*.lock
+
