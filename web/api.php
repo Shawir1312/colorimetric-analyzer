@@ -1,11 +1,12 @@
 <?php
 /**
  * Colorimetric Analyzer - RESTful JSON API
+ * Mendukung SQLite dan MySQL/MariaDB
  */
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-API-KEY');
+header('Access-Control-Allow-Headers: Content-Type, X-API-KEY, Authorization');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -21,6 +22,18 @@ function jsonResponse(array $data, int $statusCode = 200): void {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// Helper validasi API Key
+function isValidApiKey(?string $key): bool {
+    if (!defined('API_SECRET_KEY') || empty(API_SECRET_KEY)) {
+        return true;
+    }
+    if (empty($key)) {
+        return false;
+    }
+    // Terima API key dari config, atau default umum color2026 / colan_secret_2026
+    return ($key === API_SECRET_KEY || $key === 'color2026' || $key === 'colan_secret_2026');
 }
 
 $db = getDb();
@@ -41,102 +54,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'upload' || !isset($_G
         jsonResponse(['status' => 'error', 'message' => 'Payload JSON tidak valid'], 400);
     }
 
-    // Verifikasi API Key opsional
-    $apiKey = $_SERVER['HTTP_X_API_KEY'] ?? ($data['api_key'] ?? '');
-    if (!empty(API_SECRET_KEY) && !empty($apiKey) && $apiKey !== API_SECRET_KEY) {
-        jsonResponse(['status' => 'error', 'message' => 'API Key tidak valid'], 403);
+    // Jika payload adalah ping/heartbeat
+    if (isset($data['action']) && $data['action'] === 'ping') {
+        $action = 'ping';
+    } else {
+        // Verifikasi API Key
+        $apiKey = $_SERVER['HTTP_X_API_KEY'] ?? ($data['api_key'] ?? ($_GET['api_key'] ?? ''));
+        if (!empty(API_SECRET_KEY) && !isValidApiKey($apiKey)) {
+            jsonResponse(['status' => 'error', 'message' => 'API Key tidak valid'], 403);
+        }
+
+        // Parse data warna & spektrum
+        $nowStr = date('Y-m-d H:i:s');
+        $sampleName = !empty($data['sample_name']) ? trim($data['sample_name']) : ('Sampel #' . date('d-m-Y H:i:s'));
+        $hex = !empty($data['hex']) ? strtoupper(trim($data['hex'])) : '#888888';
+        if ($hex[0] !== '#') $hex = '#' . $hex;
+
+        $r = isset($data['r']) ? (int)$data['r'] : hexdec(substr($hex, 1, 2));
+        $g = isset($data['g']) ? (int)$data['g'] : hexdec(substr($hex, 3, 2));
+        $b = isset($data['b']) ? (int)$data['b'] : hexdec(substr($hex, 5, 2));
+
+        $cx = (float)($data['cie_x'] ?? 0.3127);
+        $cy = (float)($data['cie_y'] ?? 0.3290);
+        $cz = (float)($data['cie_z'] ?? (1.0 - $cx - $cy));
+
+        $ll = (float)($data['lab_l'] ?? 50.0);
+        $la = (float)($data['lab_a'] ?? 0.0);
+        $lb = (float)($data['lab_b'] ?? 0.0);
+        $de = (float)($data['de'] ?? 0.0);
+        $isRel = !empty($data['is_relative']) ? 1 : 0;
+
+        // 8 band AS7341
+        $bands = $data['spectrum'] ?? ($data['bands'] ?? []);
+        $f1 = (float)($bands[0] ?? ($data['f1_415'] ?? 0));
+        $f2 = (float)($bands[1] ?? ($data['f2_445'] ?? 0));
+        $f3 = (float)($bands[2] ?? ($data['f3_480'] ?? 0));
+        $f4 = (float)($bands[3] ?? ($data['f4_515'] ?? 0));
+        $f5 = (float)($bands[4] ?? ($data['f5_555'] ?? 0));
+        $f6 = (float)($bands[5] ?? ($data['f6_590'] ?? 0));
+        $f7 = (float)($bands[6] ?? ($data['f7_630'] ?? 0));
+        $f8 = (float)($bands[7] ?? ($data['f8_680'] ?? 0));
+
+        $nir = (float)($data['nir'] ?? 0);
+        $clr = (float)($data['clear'] ?? 0);
+
+        $ledMa = (int)($data['led_ma'] ?? 12);
+        $gain = (string)($data['gain'] ?? '64X');
+        $samples = (int)($data['samples'] ?? 5);
+
+        $devId = !empty($data['device_id']) ? trim($data['device_id']) : 'ESP32S2_COLORIMETER';
+        $batV = (float)($data['bat_v'] ?? ($data['bat_voltage'] ?? 4.0));
+        $batPct = (int)($data['bat_pct'] ?? ($data['bat_percent'] ?? 100));
+        $charging = !empty($data['charging']) ? 1 : 0;
+        $rssi = (int)($data['rssi'] ?? 0);
+        $notes = (string)($data['notes'] ?? '');
+        $fw = (string)($data['fw_version'] ?? 'v1.2.0');
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+
+        $stmt = $db->prepare("
+            INSERT INTO measurements (
+                sample_name, hex, r, g, b, cie_x, cie_y, cie_z, lab_l, lab_a, lab_b, de, is_relative,
+                f1_415, f2_445, f3_480, f4_515, f5_555, f6_590, f7_630, f8_680, nir, clear,
+                led_ma, gain, samples, device_id, device_bat_v, device_bat_pct, charging, rssi, notes, created_at
+            ) VALUES (
+                :name, :hex, :r, :g, :b, :cx, :cy, :cz, :ll, :la, :lb, :de, :rel,
+                :f1, :f2, :f3, :f4, :f5, :f6, :f7, :f8, :nir, :clr,
+                :led, :gain, :smp, :dev, :bv, :bp, :chg, :rssi, :notes, :created_at
+            )
+        ");
+
+        $stmt->execute([
+            ':name' => $sampleName, ':hex' => $hex, ':r' => $r, ':g' => $g, ':b' => $b,
+            ':cx' => $cx, ':cy' => $cy, ':cz' => $cz, ':ll' => $ll, ':la' => $la, ':lb' => $lb,
+            ':de' => $de, ':rel' => $isRel, ':f1' => $f1, ':f2' => $f2, ':f3' => $f3,
+            ':f4' => $f4, ':f5' => $f5, ':f6' => $f6, ':f7' => $f7, ':f8' => $f8,
+            ':nir' => $nir, ':clr' => $clr, ':led' => $ledMa, ':gain' => $gain, ':smp' => $samples,
+            ':dev' => $devId, ':bv' => $batV, ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi,
+            ':notes' => $notes, ':created_at' => $nowStr
+        ]);
+
+        $insertId = (int)$db->lastInsertId();
+
+        // Perbarui status perangkat (menggunakan REPLACE INTO standar SQLite & MariaDB)
+        $stmtDev = $db->prepare("
+            REPLACE INTO device_status (
+                device_id, ip_address, firmware_version, bat_voltage, bat_percent, charging, rssi, last_seen, last_measurement_id
+            ) VALUES (
+                :dev, :ip, :fw, :bv, :bp, :chg, :rssi, :ls, :mid
+            )
+        ");
+        $stmtDev->execute([
+            ':dev' => $devId, ':ip' => $ip, ':fw' => $fw, ':bv' => $batV,
+            ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi, ':ls' => $nowStr, ':mid' => $insertId
+        ]);
+
+        jsonResponse([
+            'status' => 'success',
+            'message' => 'Data pengukuran berhasil disimpan',
+            'id' => $insertId,
+            'hex' => $hex,
+            'created_at' => $nowStr
+        ], 201);
     }
-
-    // Parse data warna & spektrum
-    $sampleName = !empty($data['sample_name']) ? trim($data['sample_name']) : ('Sampel #' . date('d-m-Y H:i:s'));
-    $hex = !empty($data['hex']) ? strtoupper(trim($data['hex'])) : '#888888';
-    if ($hex[0] !== '#') $hex = '#' . $hex;
-
-    $r = isset($data['r']) ? (int)$data['r'] : hexdec(substr($hex, 1, 2));
-    $g = isset($data['g']) ? (int)$data['g'] : hexdec(substr($hex, 3, 2));
-    $b = isset($data['b']) ? (int)$data['b'] : hexdec(substr($hex, 5, 2));
-
-    $cx = (float)($data['cie_x'] ?? 0.3127);
-    $cy = (float)($data['cie_y'] ?? 0.3290);
-    $cz = (float)($data['cie_z'] ?? (1.0 - $cx - $cy));
-
-    $ll = (float)($data['lab_l'] ?? 50.0);
-    $la = (float)($data['lab_a'] ?? 0.0);
-    $lb = (float)($data['lab_b'] ?? 0.0);
-    $de = (float)($data['de'] ?? 0.0);
-    $isRel = !empty($data['is_relative']) ? 1 : 0;
-
-    // 8 band AS7341
-    $bands = $data['spectrum'] ?? ($data['bands'] ?? []);
-    $f1 = (float)($bands[0] ?? ($data['f1_415'] ?? 0));
-    $f2 = (float)($bands[1] ?? ($data['f2_445'] ?? 0));
-    $f3 = (float)($bands[2] ?? ($data['f3_480'] ?? 0));
-    $f4 = (float)($bands[3] ?? ($data['f4_515'] ?? 0));
-    $f5 = (float)($bands[4] ?? ($data['f5_555'] ?? 0));
-    $f6 = (float)($bands[5] ?? ($data['f6_590'] ?? 0));
-    $f7 = (float)($bands[6] ?? ($data['f7_630'] ?? 0));
-    $f8 = (float)($bands[7] ?? ($data['f8_680'] ?? 0));
-
-    $nir = (float)($data['nir'] ?? 0);
-    $clr = (float)($data['clear'] ?? 0);
-
-    $ledMa = (int)($data['led_ma'] ?? 12);
-    $gain = (string)($data['gain'] ?? '64X');
-    $samples = (int)($data['samples'] ?? 5);
-
-    $devId = !empty($data['device_id']) ? trim($data['device_id']) : 'ESP32S2_COLORIMETER';
-    $batV = (float)($data['bat_v'] ?? ($data['bat_voltage'] ?? 4.0));
-    $batPct = (int)($data['bat_pct'] ?? ($data['bat_percent'] ?? 100));
-    $charging = !empty($data['charging']) ? 1 : 0;
-    $rssi = (int)($data['rssi'] ?? 0);
-    $notes = (string)($data['notes'] ?? '');
-    $fw = (string)($data['fw_version'] ?? 'v1.2.0');
-    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
-
-    $stmt = $db->prepare("
-        INSERT INTO measurements (
-            sample_name, hex, r, g, b, cie_x, cie_y, cie_z, lab_l, lab_a, lab_b, de, is_relative,
-            f1_415, f2_445, f3_480, f4_515, f5_555, f6_590, f7_630, f8_680, nir, clear,
-            led_ma, gain, samples, device_id, device_bat_v, device_bat_pct, charging, rssi, notes, created_at
-        ) VALUES (
-            :name, :hex, :r, :g, :b, :cx, :cy, :cz, :ll, :la, :lb, :de, :rel,
-            :f1, :f2, :f3, :f4, :f5, :f6, :f7, :f8, :nir, :clr,
-            :led, :gain, :smp, :dev, :bv, :bp, :chg, :rssi, :notes, datetime('now', '+9 hours')
-        )
-    ");
-
-    $stmt->execute([
-        ':name' => $sampleName, ':hex' => $hex, ':r' => $r, ':g' => $g, ':b' => $b,
-        ':cx' => $cx, ':cy' => $cy, ':cz' => $cz, ':ll' => $ll, ':la' => $la, ':lb' => $lb,
-        ':de' => $de, ':rel' => $isRel, ':f1' => $f1, ':f2' => $f2, ':f3' => $f3,
-        ':f4' => $f4, ':f5' => $f5, ':f6' => $f6, ':f7' => $f7, ':f8' => $f8,
-        ':nir' => $nir, ':clr' => $clr, ':led' => $ledMa, ':gain' => $gain, ':smp' => $samples,
-        ':dev' => $devId, ':bv' => $batV, ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi,
-        ':notes' => $notes
-    ]);
-
-    $insertId = (int)$db->lastInsertId();
-
-    // Perbarui status perangkat
-    $stmtDev = $db->prepare("
-        INSERT OR REPLACE INTO device_status (
-            device_id, ip_address, firmware_version, bat_voltage, bat_percent, charging, rssi, last_seen, last_measurement_id
-        ) VALUES (
-            :dev, :ip, :fw, :bv, :bp, :chg, :rssi, datetime('now', '+9 hours'), :mid
-        )
-    ");
-    $stmtDev->execute([
-        ':dev' => $devId, ':ip' => $ip, ':fw' => $fw, ':bv' => $batV,
-        ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi, ':mid' => $insertId
-    ]);
-
-    jsonResponse([
-        'status' => 'success',
-        'message' => 'Data pengukuran berhasil disimpan',
-        'id' => $insertId,
-        'hex' => $hex,
-        'created_at' => date('Y-m-d H:i:s')
-    ], 201);
 }
 
 // ---------------------------------------------------------------------
@@ -147,12 +166,25 @@ if ($action === 'latest') {
     $device = $db->query("SELECT * FROM device_status ORDER BY last_seen DESC LIMIT 1")->fetch();
     $totalCount = (int)$db->query("SELECT COUNT(*) FROM measurements")->fetchColumn();
 
+    $isOnline = false;
+    $timeDiff = 999999;
+    if ($device && !empty($device['last_seen'])) {
+        $lastSeenEpoch = strtotime($device['last_seen']);
+        $timeDiff = time() - $lastSeenEpoch;
+        $isOnline = ($timeDiff >= 0 && $timeDiff < 120);
+    }
+
     jsonResponse([
         'status' => 'success',
         'total_measurements' => $totalCount,
         'latest_measurement' => $latest ?: null,
-        'device' => $device ?: null,
+        'device' => $device ? array_merge($device, [
+            'is_online' => $isOnline,
+            'last_seen_epoch' => strtotime($device['last_seen']),
+            'time_diff_sec' => $timeDiff
+        ]) : null,
         'server_time' => date('Y-m-d H:i:s'),
+        'server_epoch' => time(),
         'timezone' => APP_TIMEZONE
     ]);
 }
@@ -202,40 +234,45 @@ if ($action === 'list') {
 }
 
 // ---------------------------------------------------------------------
-// 4. DETAIL SATU PENGUKURAN
+// 4. DETAIL PENGUKURAN TUNGGAL
 // ---------------------------------------------------------------------
 if ($action === 'get') {
     $id = (int)($_GET['id'] ?? 0);
-    $stmt = $db->prepare("SELECT * FROM measurements WHERE id = :id");
+    $stmt = $db->prepare("SELECT * FROM measurements WHERE id = :id LIMIT 1");
     $stmt->execute([':id' => $id]);
     $item = $stmt->fetch();
 
     if (!$item) {
-        jsonResponse(['status' => 'error', 'message' => 'Data pengukuran tidak ditemukan'], 404);
+        jsonResponse(['status' => 'error', 'message' => 'Data tidak ditemukan'], 404);
     }
 
     jsonResponse(['status' => 'success', 'data' => $item]);
 }
 
 // ---------------------------------------------------------------------
-// 5. UPDATE CATATAN / NAMA SAMPEL
+// 5. UPDATE CATATAN (NOTES)
 // ---------------------------------------------------------------------
-if ($action === 'update_notes') {
-    $id = (int)($_POST['id'] ?? 0);
-    $name = trim($_POST['sample_name'] ?? '');
-    $notes = trim($_POST['notes'] ?? '');
+if ($action === 'update_notes' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true) ?: $_POST;
 
-    $stmt = $db->prepare("UPDATE measurements SET sample_name = :name, notes = :notes WHERE id = :id");
-    $stmt->execute([':name' => $name, ':notes' => $notes, ':id' => $id]);
+    $id = (int)($data['id'] ?? 0);
+    $notes = trim($data['notes'] ?? '');
+
+    $stmt = $db->prepare("UPDATE measurements SET notes = :notes WHERE id = :id");
+    $stmt->execute([':notes' => $notes, ':id' => $id]);
 
     jsonResponse(['status' => 'success', 'message' => 'Catatan berhasil diperbarui']);
 }
 
 // ---------------------------------------------------------------------
-// 6. HAPUS DATA
+// 6. HAPUS PENGUKURAN
 // ---------------------------------------------------------------------
-if ($action === 'delete') {
-    $id = (int)($_POST['id'] ?? ($_GET['id'] ?? 0));
+if ($action === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true) ?: $_POST;
+
+    $id = (int)($data['id'] ?? 0);
     $stmt = $db->prepare("DELETE FROM measurements WHERE id = :id");
     $stmt->execute([':id' => $id]);
 
@@ -279,14 +316,41 @@ if ($action === 'export_csv') {
 }
 
 // ---------------------------------------------------------------------
-// 8. PING & STATUS
+// 8. PING & HEARTBEAT DARI ESP32
 // ---------------------------------------------------------------------
 if ($action === 'ping') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true) ?: $_POST;
+
+    $nowStr = date('Y-m-d H:i:s');
+    $devId = !empty($data['device_id']) ? trim($data['device_id']) : 'ESP32S2_COLORIMETER';
+    $batV = (float)($data['bat_v'] ?? ($data['bat_voltage'] ?? 4.0));
+    $batPct = (int)($data['bat_pct'] ?? ($data['bat_percent'] ?? 100));
+    $charging = !empty($data['charging']) ? 1 : 0;
+    $rssi = (int)($data['rssi'] ?? 0);
+    $fw = (string)($data['fw_version'] ?? 'v1.2.0');
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+
+    // Cari ID pengukuran terakhir
+    $lastMid = (int)$db->query("SELECT id FROM measurements ORDER BY id DESC LIMIT 1")->fetchColumn();
+
+    $stmtDev = $db->prepare("
+        REPLACE INTO device_status (
+            device_id, ip_address, firmware_version, bat_voltage, bat_percent, charging, rssi, last_seen, last_measurement_id
+        ) VALUES (
+            :dev, :ip, :fw, :bv, :bp, :chg, :rssi, :ls, :mid
+        )
+    ");
+    $stmtDev->execute([
+        ':dev' => $devId, ':ip' => $ip, ':fw' => $fw, ':bv' => $batV,
+        ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi, ':ls' => $nowStr, ':mid' => $lastMid
+    ]);
+
     jsonResponse([
         'status' => 'ok',
-        'app' => APP_NAME,
-        'version' => APP_VERSION,
-        'time' => date('Y-m-d H:i:s'),
+        'device_id' => $devId,
+        'server_time' => $nowStr,
+        'server_epoch' => time(),
         'timezone' => APP_TIMEZONE
     ]);
 }

@@ -220,7 +220,8 @@ struct tm editTm;
 bool lastCancelled = false;
 char wifiSsid[33] = "";
 char wifiPass[64] = "";
-char webApiUrl[96] = "http://192.168.1.5:8080/api.php";
+char webApiUrl[96] = "http://srv4.shawir.id:9070/api.php";
+char webApiKey[32] = "color2026";
 
 // Tabel warna (dihitung saat boot)
 const float BAND_WL[8] = { 415, 445, 480, 515, 555, 590, 630, 680 };
@@ -406,8 +407,20 @@ void loadAll() {
     String wp = prefs.getString("wpass", "");
     strlcpy(wifiSsid, ws.c_str(), sizeof(wifiSsid));
     strlcpy(wifiPass, wp.c_str(), sizeof(wifiPass));
-    String wu = prefs.getString("weburl", "http://192.168.1.5:8080/api.php");
-    strlcpy(webApiUrl, wu.c_str(), sizeof(webApiUrl));
+    String wu = prefs.getString("weburl", "");
+    if (wu.length() > 7 && wu.indexOf("192.168.1.5") < 0) {
+      strlcpy(webApiUrl, wu.c_str(), sizeof(webApiUrl));
+    } else {
+      strlcpy(webApiUrl, "http://srv4.shawir.id:9070/api.php", sizeof(webApiUrl));
+      prefs.putString("weburl", webApiUrl);
+    }
+    String wk = prefs.getString("webkey", "");
+    if (wk.length() > 0 && wk.indexOf("colan_secret") < 0) {
+      strlcpy(webApiKey, wk.c_str(), sizeof(webApiKey));
+    } else {
+      strlcpy(webApiKey, "color2026", sizeof(webApiKey));
+      prefs.putString("webkey", webApiKey);
+    }
   }
 
   uint32_t ep = prefs.getUInt("epoch", 1792065600UL);  // default 15-10-2026 12:00
@@ -2511,17 +2524,40 @@ void touchCalFinishScreen() {
   waitRelease();
 }
 
-// ======================= PENGIRIMAN WEB API =======================
+// ======================= PENGIRIMAN WEB API & TELEMETRI =======================
+void sendWebPing() {
+  if (WiFi.status() != WL_CONNECTED || webApiUrl[0] == 0) return;
+  HTTPClient http;
+  if (!http.begin(webApiUrl)) return;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-KEY", webApiKey);
+  http.setTimeout(4000);
+
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+    "{\"action\":\"ping\",\"device_id\":\"ESP32S2_COLORIMETER\","
+    "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d,"
+    "\"fw_version\":\"%s\",\"api_key\":\"%s\"}",
+    batVoltage, batPercent, batCharging ? 1 : 0, WiFi.RSSI(),
+    FW_VERSION, webApiKey
+  );
+
+  http.POST(payload);
+  http.end();
+}
+
 bool uploadResultToWeb(const Result &r) {
   if (WiFi.status() != WL_CONNECTED || webApiUrl[0] == 0) return false;
 
   HTTPClient http;
   if (!http.begin(webApiUrl)) return false;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-API-KEY", "colan_secret_2026");
-  http.setTimeout(3500);
+  http.addHeader("X-API-KEY", webApiKey);
+  http.setTimeout(5000);
 
-  char payload[512];
+  char payload[640];
   char dateBuf[32];
   dateStr(r.ts, dateBuf, sizeof(dateBuf));
 
@@ -2536,7 +2572,8 @@ bool uploadResultToWeb(const Result &r) {
     "\"nir\":%.2f,\"clear\":%.2f,"
     "\"led_ma\":%d,\"gain\":\"%s\",\"samples\":%d,"
     "\"device_id\":\"ESP32S2_COLORIMETER\","
-    "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d}",
+    "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d,"
+    "\"api_key\":\"%s\"}",
     dateBuf,
     r.rr, r.gg, r.bb,
     r.rr, r.gg, r.bb,
@@ -2546,7 +2583,8 @@ bool uploadResultToWeb(const Result &r) {
     r.R[0], r.R[1], r.R[2], r.R[3], r.R[4], r.R[5], r.R[6], r.R[7],
     r.nir, r.clr,
     LED_OPTS[cfg.ledIdx], GAIN_TXT[cfg.gainIdx], N_OPTS[cfg.nIdx],
-    batVoltage, batPercent, batCharging ? 1 : 0, WiFi.RSSI()
+    batVoltage, batPercent, batCharging ? 1 : 0, WiFi.RSSI(),
+    webApiKey
   );
 
   int code = http.POST(payload);
@@ -2996,6 +3034,7 @@ void loop() {
     lastWifiSt = curWifiSt;
     if (curWifiSt == WL_CONNECTED) {
       configTime(9 * 3600, 0, "pool.ntp.org", "id.pool.ntp.org", "time.google.com");
+      sendWebPing(); // Kirim status telemetri ke server seketika begitu terhubung
     }
     if (scr != S_BOOT && scr != S_PROCESS) {
       drawWifiIcon();
@@ -3012,6 +3051,13 @@ void loop() {
         drawHeaderClock();
       }
     }
+  }
+
+  // Kirim Heartbeat / Telemetri berkala ke server web (setiap 25 detik saat WiFi aktif)
+  static uint32_t lastPingLoop = 0;
+  if (curWifiSt == WL_CONNECTED && (now - lastPingLoop > 25000)) {
+    lastPingLoop = now;
+    sendWebPing();
   }
 
   // Periksa baterai & status cas secara berkala

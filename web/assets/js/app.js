@@ -308,16 +308,26 @@ function updateDevicePill(dev) {
   const chg = document.getElementById('device-chg-icon');
 
   if (dot && txt) {
-    const isOnline = (new Date() - new Date(dev.last_seen)) < 120000;
+    let isOnline = false;
+    if (dev.is_online !== undefined) {
+      isOnline = Boolean(dev.is_online);
+    } else if (dev.last_seen_epoch) {
+      isOnline = (Math.abs(Date.now() / 1000 - dev.last_seen_epoch) < 120);
+    } else if (dev.last_seen) {
+      const parsedTime = new Date(dev.last_seen.replace(' ', 'T')).getTime();
+      isOnline = !isNaN(parsedTime) && (Math.abs(Date.now() - parsedTime) < 120000);
+    }
+
     dot.className = isOnline ? 'status-dot' : 'status-dot offline';
-    txt.textContent = isOnline ? 'Device Online' : 'Device Offline';
+    txt.textContent = isOnline ? 'ESP32 Online' : 'ESP32 Standby';
   }
 
-  if (bat) {
-    bat.textContent = `${dev.bat_percent}% (${dev.bat_voltage.toFixed(2)}V)`;
+  if (bat && dev.bat_percent !== undefined) {
+    const v = parseFloat(dev.bat_voltage) || 0;
+    bat.textContent = `${dev.bat_percent}% (${v.toFixed(2)}V)`;
   }
   if (chg) {
-    chg.style.display = dev.charging ? 'inline-block' : 'none';
+    chg.style.display = (dev.charging && dev.charging != '0') ? 'inline-block' : 'none';
   }
 }
 
