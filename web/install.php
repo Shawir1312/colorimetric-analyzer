@@ -4,6 +4,11 @@
  * Memudahkan instalasi database SQLite / MySQL hanya dalam 1 kali klik.
  */
 
+// Coba perbaiki izin tulis secara otomatis saat file dibuka
+@chmod(__DIR__, 0777);
+@chmod(__DIR__ . '/config.php', 0666);
+@chmod(__DIR__ . '/data', 0777);
+
 // Tangkap zona waktu awal
 $currentTz = 'Asia/Jayapura';
 if (file_exists(__DIR__ . '/config.php')) {
@@ -17,7 +22,23 @@ if (file_exists(__DIR__ . '/config.php')) {
 $lockFile = __DIR__ . '/data/installed.lock';
 $isInstalled = file_exists($lockFile);
 
+// Endpoint untuk unduh langsung config.php jika server membatasi penulisan file
+if (isset($_GET['download_config'])) {
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="config.php"');
+    if (file_exists(__DIR__ . '/config.php')) {
+        readfile(__DIR__ . '/config.php');
+    } else {
+        echo "<?php\n// File config.php belum digenerate.\n";
+    }
+    exit;
+}
+
 // Periksa Kesiapan Server (Pre-flight checks)
+$configFile = __DIR__ . '/config.php';
+$isConfigWritable = file_exists($configFile) ? is_writable($configFile) : is_writable(__DIR__);
+$isDataWritable = file_exists(__DIR__ . '/data') ? is_writable(__DIR__ . '/data') : is_writable(__DIR__);
+
 $checks = [
     'php_version' => [
         'name' => 'Versi PHP >= 7.4',
@@ -43,10 +64,16 @@ $checks = [
         'detail' => extension_loaded('pdo_mysql') ? 'Tersedia' : 'Diperlukan jika memilih MySQL/MariaDB',
         'required' => false
     ],
+    'config_writable' => [
+        'name' => 'Izin Tulis config.php',
+        'passed' => $isConfigWritable,
+        'detail' => $isConfigWritable ? 'Dapat ditulis (Writable)' : 'Perlu izin tulis: jalankan `chmod 666 web/config.php`',
+        'required' => false
+    ],
     'dir_writable' => [
-        'name' => 'Izin Tulis Folder Web & Data',
-        'passed' => is_writable(__DIR__),
-        'detail' => is_writable(__DIR__) ? 'Folder memiliki izin tulis (Writable)' : 'Folder web perlu diberi izin chmod 775 atau 777',
+        'name' => 'Izin Tulis Folder web/data',
+        'passed' => $isDataWritable,
+        'detail' => $isDataWritable ? 'Folder data siap digunakan' : 'Jalankan `chmod 777 web/data`',
         'required' => true
     ],
     'json' => [
@@ -66,7 +93,6 @@ foreach ($checks as $c) {
 }
 
 // Proses AJAX / POST Instalasi
-$ajaxResponse = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'do_install') {
     header('Content-Type: application/json; charset=utf-8');
     
@@ -97,11 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Buat folder data jika belum ada
     $dataDir = __DIR__ . '/data';
     if (!is_dir($dataDir)) {
-        if (!@mkdir($dataDir, 0777, true)) {
-            echo json_encode(['status' => 'error', 'message' => 'Gagal membuat folder web/data. Pastikan izin tulis (chmod) diizinkan.']);
-            exit;
-        }
+        @mkdir($dataDir, 0777, true);
     }
+    @chmod($dataDir, 0777);
 
     try {
         if ($dbType === 'sqlite') {
@@ -187,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $pdoServer = new PDO($dsnServer, $mysqlUser, $mysqlPass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
                 $pdoServer->exec("CREATE DATABASE IF NOT EXISTS `$mysqlName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
             } catch (Exception $e) {
-                // Abaikan jika tidak punya hak CREATE DATABASE, mungkin database sudah dibuat via cPanel
+                // Abaikan jika tidak punya hak CREATE DATABASE
             }
 
             // Sambung langsung ke database target
@@ -256,7 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         }
 
-        // Tulis File config.php
+        // Susun Kode File config.php
         $tzLabel = 'WIT (UTC+9)';
         if ($tz === 'Asia/Makassar') $tzLabel = 'WITA (UTC+8)';
         elseif ($tz === 'Asia/Jakarta') $tzLabel = 'WIB (UTC+7)';
@@ -283,8 +307,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $configContent .= "define('APP_NAME', 'Colorimetric Analyzer Web');\n";
         $configContent .= "define('APP_VERSION', '1.2.0');\n";
 
-        if (!@file_put_contents(__DIR__ . '/config.php', $configContent)) {
-            throw new Exception('Gagal menulis file config.php. Silakan periksa izin file.');
+        // TULIS FILE CONFIG DENGAN MULTI-STRATEGI
+        $written = false;
+        $targetConfig = __DIR__ . '/config.php';
+
+        // 1. Coba chmod target
+        @chmod($targetConfig, 0666);
+        @chmod(__DIR__, 0777);
+
+        // 2. Tulis langsung
+        if (@file_put_contents($targetConfig, $configContent) !== false) {
+            $written = true;
+        }
+
+        // 3. Jika gagal, coba hapus (unlink) lalu tulis baru
+        if (!$written && file_exists($targetConfig)) {
+            if (@unlink($targetConfig)) {
+                if (@file_put_contents($targetConfig, $configContent) !== false) {
+                    $written = true;
+                }
+            }
+        }
+
+        // 4. Jika masih gagal, coba via fopen
+        if (!$written) {
+            $fp = @fopen($targetConfig, 'wb');
+            if ($fp) {
+                if (@fwrite($fp, $configContent) !== false) {
+                    $written = true;
+                }
+                @fclose($fp);
+            }
         }
 
         // Tulis file lock instalasi
@@ -303,6 +356,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
         $apiUrl = $protocol . '://' . $host . $scriptDir . '/api.php';
 
+        // JIKA PENULISAN CONFIG GAGAL KARENA PERMISSION RESTRICTED
+        if (!$written) {
+            echo json_encode([
+                'status' => 'manual_config',
+                'message' => 'Database & tabel berhasil dipasang! Namun web server Anda mengunci penulisan file config.php.',
+                'db_type' => $dbType,
+                'api_url' => $apiUrl,
+                'api_key' => $apiKey,
+                'timezone' => $tzLabel,
+                'config_code' => $configContent,
+                'chmod_cmd' => 'chmod 666 ' . $targetConfig . ' && chmod 777 ' . __DIR__ . '/data'
+            ]);
+            exit;
+        }
+
+        // SUKSES PENUH OTOMATIS
         echo json_encode([
             'status' => 'success',
             'message' => 'Instalasi server berhasil diselesaikan dalam 1 langkah!',
@@ -422,6 +491,9 @@ if ($isInstalled && file_exists($lockFile)) {
     }
     .check-item.fail {
       border-left: 4px solid var(--accent-red);
+    }
+    .check-item.warn {
+      border-left: 4px solid var(--accent-amber);
     }
     .check-icon {
       font-size: 1.25rem;
@@ -604,8 +676,8 @@ if ($isInstalled && file_exists($lockFile)) {
         <div class="card-body">
           <div class="check-grid">
             <?php foreach ($checks as $k => $c): ?>
-              <div class="check-item <?= $c['passed'] ? 'pass' : ($c['required'] ? 'fail' : '') ?>">
-                <span class="check-icon"><?= $c['passed'] ? '✅' : ($c['required'] ? '❌' : 'ℹ️') ?></span>
+              <div class="check-item <?= $c['passed'] ? 'pass' : ($c['required'] ? 'fail' : 'warn') ?>">
+                <span class="check-icon"><?= $c['passed'] ? '✅' : ($c['required'] ? '❌' : '⚠️') ?></span>
                 <div style="flex: 1;">
                   <div style="font-weight: 600; color: var(--text-primary);"><?= htmlspecialchars($c['name']) ?></div>
                   <div style="font-size: 0.78rem; color: var(--text-muted);"><?= htmlspecialchars($c['detail']) ?></div>
@@ -613,9 +685,13 @@ if ($isInstalled && file_exists($lockFile)) {
               </div>
             <?php endforeach; ?>
           </div>
-          <?php if (!$allRequiredPassed): ?>
-            <div class="alert alert-danger" style="margin-bottom: 0;">
-              Mohon periksa peringatan bertanda merah di atas sebelum melanjutkan.
+
+          <?php if (!$isConfigWritable): ?>
+            <div class="alert alert-warning" style="margin-bottom: 0; font-size: 0.86rem; line-height: 1.5;">
+              ℹ️ <strong>Tips Izin File config.php:</strong> Server web Anda saat ini membatasi penulisan file `config.php`.<br>
+              Jika nanti installer tidak dapat menulis otomatis, cukup jalankan perintah di terminal: 
+              <code style="background: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">chmod 666 web/config.php web/data</code> 
+              atau installer akan menyediakan tombol <strong>Unduh File config.php</strong> secara instan.
             </div>
           <?php endif; ?>
         </div>
@@ -746,6 +822,8 @@ if ($isInstalled && file_exists($lockFile)) {
   </main>
 
   <script>
+    let generatedConfigCode = '';
+
     function switchTab(type) {
       document.getElementById('input_db_type').value = type;
       
@@ -770,6 +848,17 @@ if ($isInstalled && file_exists($lockFile)) {
       }
     }
 
+    function downloadConfigBlob() {
+      if (!generatedConfigCode) return;
+      const blob = new Blob([generatedConfigCode], { type: 'application/x-httpd-php' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'config.php';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
     async function handleInstall(e) {
       e.preventDefault();
       
@@ -792,23 +881,62 @@ if ($isInstalled && file_exists($lockFile)) {
         });
 
         const data = await response.json();
-
         resBox.style.display = 'block';
+
         if (data.status === 'success') {
           resBox.className = 'alert alert-success';
           resBox.innerHTML = `
-            <div style="font-weight: 700; font-size: 1rem; margin-bottom: 0.35rem;">🎉 ${data.message}</div>
+            <div style="font-weight: 700; font-size: 1.05rem; margin-bottom: 0.35rem;">🎉 ${data.message}</div>
             <div style="font-size: 0.85rem; line-height: 1.5;">
               Tipe Database: <strong>${data.db_type.toUpperCase()}</strong> | Zona Waktu: <strong>${data.timezone}</strong><br>
               URL API ESP32: <code style="color: var(--accent-cyan); font-family: monospace;">${data.api_url}</code><br>
               API Key: <code style="color: var(--accent-amber); font-family: monospace;">${data.api_key}</code>
             </div>
             <div style="margin-top: 1rem;">
-              <a href="index.php" class="btn btn-primary btn-sm" style="font-size: 0.9rem; padding: 0.5rem 1rem;">🚀 Langsung Buka Dashboard Web</a>
+              <a href="index.php" class="btn btn-primary" style="font-size: 0.95rem; padding: 0.6rem 1.25rem;">🚀 Langsung Buka Dashboard Web</a>
             </div>
           `;
-          // Sembunyikan form agar bersih
           form.querySelector('button[type="submit"]').style.display = 'none';
+
+        } else if (data.status === 'manual_config') {
+          // DATABASE BERHASIL, TETAPI SERVER MEMBATASI PENULISAN CONFIG.PHP
+          generatedConfigCode = data.config_code;
+          resBox.className = 'alert alert-warning';
+          resBox.innerHTML = `
+            <div style="font-weight: 700; font-size: 1.05rem; color: #F59E0B; margin-bottom: 0.4rem;">
+              ✅ Database & Skema Tabel Berhasil Dibuat!
+            </div>
+            <div style="font-size: 0.86rem; line-height: 1.5; color: var(--text-primary); margin-bottom: 0.75rem;">
+              Namun web server Anda memiliki izin terbatas (Read-Only) sehingga tidak dapat menimpa file <code style="color: var(--accent-cyan); font-family: monospace;">web/config.php</code> secara otomatis.
+            </div>
+            
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.85rem; margin-bottom: 1rem;">
+              <div style="font-weight: 600; font-size: 0.82rem; margin-bottom: 0.5rem; color: var(--accent-amber);">PILIH SALAH SATU CARA MUDAH BERIKUT:</div>
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+                <button type="button" onclick="downloadConfigBlob()" class="btn btn-primary btn-sm">
+                  📥 Unduh File config.php
+                </button>
+                <button type="button" onclick="navigator.clipboard.writeText(generatedConfigCode); alert('Kode konfigurasi disalin ke clipboard!');" class="btn btn-secondary btn-sm">
+                  📋 Salin Kode Konfigurasi
+                </button>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4;">
+                <strong>Opsi A:</strong> Klik "Unduh File config.php", lalu upload/simpan ke dalam folder <code style="color: var(--accent-cyan); font-family: monospace;">web/</code>.<br>
+                <strong>Opsi B (Terminal/SSH):</strong> Jalankan perintah: <code style="color: var(--accent-green); font-family: monospace;">${data.chmod_cmd}</code>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <a href="index.php" class="btn btn-success" style="padding: 0.6rem 1.25rem;">
+                🚀 Buka Dashboard Web Sekarang
+              </a>
+              <button type="button" onclick="handleInstall(event)" class="btn btn-secondary btn-sm">
+                🔄 Coba Simpan Ulang
+              </button>
+            </div>
+          `;
+          form.querySelector('button[type="submit"]').style.display = 'none';
+
         } else {
           resBox.className = 'alert alert-danger';
           resBox.innerHTML = `<strong>Gagal:</strong> ${data.message}`;
