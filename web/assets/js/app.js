@@ -1,6 +1,7 @@
 /**
  * Colorimetric Analyzer - Client Application JavaScript
- * CIE 1931 Chromaticity Diagram & Spectral Power Distribution Rendering
+ * CIE 1931 Chromaticity Diagram & Spectral Power Distribution Rendering (Light Theme)
+ * Bulk Deletion & Sample Management
  */
 
 // Wavelength to approximate sRGB color helper
@@ -31,7 +32,7 @@ function wlToRgb(wl) {
 }
 
 // ---------------------------------------------------------------------
-// 1. RENDER CIE 1931 CHROMATICITY DIAGRAM
+// 1. RENDER CIE 1931 CHROMATICITY DIAGRAM (LIGHT THEME)
 // ---------------------------------------------------------------------
 const CIE_LOCUS = [
   [0.1741, 0.0050], [0.1740, 0.0050], [0.1738, 0.0051], [0.1736, 0.0052], [0.1733, 0.0054],
@@ -68,12 +69,12 @@ function drawCie1931(canvasId, points = []) {
   const mapX = x => padL + (x / 0.8) * plotW;
   const mapY = y => padT + (1.0 - y / 0.9) * plotH;
 
-  // Background
-  ctx.fillStyle = '#0F172A';
+  // Background putih bersih
+  ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
 
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+  // Garis Grid halus
+  ctx.strokeStyle = '#F1F5F9';
   ctx.lineWidth = 1;
   ctx.font = '10px JetBrains Mono';
   ctx.fillStyle = '#64748B';
@@ -96,7 +97,7 @@ function drawCie1931(canvasId, points = []) {
     ctx.fillText(y.toFixed(1), padL - 26, py + 3);
   }
 
-  // Draw Spectral Locus Tongue
+  // Gambar Tapal Kuda CIE Locus
   ctx.beginPath();
   CIE_LOCUS.forEach((pt, i) => {
     const px = mapX(pt[0]);
@@ -106,58 +107,58 @@ function drawCie1931(canvasId, points = []) {
   });
   ctx.closePath();
 
-  // Subtle interior gradient
+  // Gradien spektral lembut di dalam locus
   const grad = ctx.createLinearGradient(mapX(0.1), mapY(0.1), mapX(0.6), mapY(0.7));
-  grad.addColorStop(0, 'rgba(59, 130, 246, 0.12)');
-  grad.addColorStop(0.5, 'rgba(16, 185, 129, 0.12)');
-  grad.addColorStop(1, 'rgba(245, 158, 11, 0.12)');
+  grad.addColorStop(0, 'rgba(37, 99, 235, 0.08)');
+  grad.addColorStop(0.5, 'rgba(5, 150, 105, 0.08)');
+  grad.addColorStop(1, 'rgba(217, 119, 6, 0.08)');
   ctx.fillStyle = grad;
   ctx.fill();
 
-  ctx.strokeStyle = '#38BDF8';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#2563EB';
+  ctx.lineWidth = 1.75;
   ctx.stroke();
 
-  // Purple line (connect ends of locus)
+  // Purple line
   ctx.beginPath();
   ctx.moveTo(mapX(CIE_LOCUS[0][0]), mapY(CIE_LOCUS[0][1]));
   ctx.lineTo(mapX(CIE_LOCUS[CIE_LOCUS.length - 1][0]), mapY(CIE_LOCUS[CIE_LOCUS.length - 1][1]));
-  ctx.strokeStyle = 'rgba(236, 72, 153, 0.8)';
+  ctx.strokeStyle = 'rgba(219, 39, 119, 0.7)';
   ctx.stroke();
 
-  // D65 Standard Illuminant Reference Point (x=0.3127, y=0.3290)
+  // Titik Referensi D65
   const d65x = mapX(0.3127);
   const d65y = mapY(0.3290);
-  ctx.fillStyle = '#FFFFFF';
+  ctx.fillStyle = '#0F172A';
   ctx.beginPath();
-  ctx.arc(d65x, d65y, 3, 0, Math.PI * 2);
+  ctx.arc(d65x, d65y, 3.5, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#94A3B8';
+  ctx.fillStyle = '#64748B';
   ctx.fillText('D65', d65x + 6, d65y - 4);
 
-  // Plot Sample Points
-  points.forEach((pt, idx) => {
+  // Plot Titik Sampel
+  points.forEach((pt) => {
     if (!pt.x || !pt.y) return;
     const px = mapX(pt.x);
     const py = mapY(pt.y);
 
-    // Glowing halo
+    // Halo bayangan
     ctx.beginPath();
-    ctx.arc(px, py, 9, 0, Math.PI * 2);
-    ctx.fillStyle = pt.hex ? `${pt.hex}55` : 'rgba(59, 130, 246, 0.35)';
+    ctx.arc(px, py, 8, 0, Math.PI * 2);
+    ctx.fillStyle = pt.hex ? `${pt.hex}33` : 'rgba(37, 99, 235, 0.2)';
     ctx.fill();
 
-    // Solid core
+    // Titik utama
     ctx.beginPath();
     ctx.arc(px, py, 5, 0, Math.PI * 2);
-    ctx.fillStyle = pt.hex || '#38BDF8';
+    ctx.fillStyle = pt.hex || '#2563EB';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#FFFFFF';
     ctx.stroke();
 
     if (pt.label) {
-      ctx.fillStyle = '#F8FAFC';
+      ctx.fillStyle = '#0F172A';
       ctx.font = 'bold 11px Outfit';
       ctx.fillText(pt.label, px + 8, py - 4);
     }
@@ -165,20 +166,20 @@ function drawCie1931(canvasId, points = []) {
 }
 
 // ---------------------------------------------------------------------
-// 2. RENDER 8-BAND SPECTRAL REFLECTANCE GRAPH
+// 2. RENDER 8-BAND SPECTRAL REFLECTANCE GRAPH (LIGHT THEME)
 // ---------------------------------------------------------------------
 const BANDS_DEF = [
   { nm: 415, label: 'F1 415nm', color: '#7E00DB' },
   { nm: 445, label: 'F2 445nm', color: '#1900D5' },
   { nm: 480, label: 'F3 480nm', color: '#0075FF' },
-  { nm: 515, label: 'F4 515nm', color: '#00E4D0' },
-  { nm: 555, label: 'F5 555nm', color: '#42FF00' },
-  { nm: 590, label: 'F6 590nm', color: '#FFDC00' },
-  { nm: 630, label: 'F7 630nm', color: '#FF6D00' },
-  { nm: 680, label: 'F8 680nm', color: '#E80000' }
+  { nm: 515, label: 'F4 515nm', color: '#00B4A0' },
+  { nm: 555, label: 'F5 555nm', color: '#16A34A' },
+  { nm: 590, label: 'F6 590nm', color: '#D97706' },
+  { nm: 630, label: 'F7 630nm', color: '#EA580C' },
+  { nm: 680, label: 'F8 680nm', color: '#DC2626' }
 ];
 
-function drawSpectrumChart(canvasId, values = []) {
+function drawSpectrumChart(canvasId, values = [0,0,0,0,0,0,0,0]) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -196,13 +197,13 @@ function drawSpectrumChart(canvasId, values = []) {
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
 
-  ctx.fillStyle = '#0F172A';
+  ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
 
   const maxVal = Math.max(10, ...values) * 1.15;
 
   // Grid
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+  ctx.strokeStyle = '#F1F5F9';
   ctx.fillStyle = '#64748B';
   ctx.font = '10px JetBrains Mono';
 
@@ -216,7 +217,7 @@ function drawSpectrumChart(canvasId, values = []) {
     ctx.fillText(Math.round(yVal), 8, py + 3);
   }
 
-  // Draw Bars & Spectral Spline
+  // Draw Bars
   const barW = Math.max(14, (plotW / 8) - 10);
   const pts = [];
 
@@ -227,10 +228,10 @@ function drawSpectrumChart(canvasId, values = []) {
 
     pts.push({ x: cx, y: by, color: BANDS_DEF[i].color });
 
-    // Bar
+    // Bar Fill
     const bGrad = ctx.createLinearGradient(0, by, 0, padT + plotH);
     bGrad.addColorStop(0, BANDS_DEF[i].color);
-    bGrad.addColorStop(1, `${BANDS_DEF[i].color}33`);
+    bGrad.addColorStop(1, `${BANDS_DEF[i].color}22`);
     ctx.fillStyle = bGrad;
     ctx.fillRect(cx - barW / 2, by, barW, bh);
 
@@ -240,14 +241,15 @@ function drawSpectrumChart(canvasId, values = []) {
     ctx.strokeRect(cx - barW / 2, by, barW, bh);
 
     // X Axis Labels
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = '10px Outfit';
-    ctx.fillText(BANDS_DEF[i].nm, cx - 10, padT + plotH + 16);
+    ctx.fillStyle = '#0F172A';
+    ctx.font = 'bold 10px Outfit';
+    ctx.fillText(BANDS_DEF[i].nm, cx - 11, padT + plotH + 16);
     ctx.fillStyle = '#64748B';
+    ctx.font = '10px JetBrains Mono';
     ctx.fillText(`F${i+1}`, cx - 6, padT + plotH + 28);
   });
 
-  // Connecting Spline
+  // Spline
   if (pts.length > 1) {
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -257,12 +259,9 @@ function drawSpectrumChart(canvasId, values = []) {
       ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
     }
     ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.strokeStyle = '#FFFFFF';
+    ctx.strokeStyle = '#2563EB';
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = 'rgba(255,255,255,0.4)';
-    ctx.shadowBlur = 8;
     ctx.stroke();
-    ctx.shadowBlur = 0;
   }
 }
 
@@ -290,7 +289,6 @@ function initLivePolling() {
       if (json.latest_measurement && lastKnownId > 0 && json.latest_measurement.id > lastKnownId) {
         lastKnownId = json.latest_measurement.id;
         showToast(`Data baru diterima: ${json.latest_measurement.sample_name || json.latest_measurement.hex}`, json.latest_measurement.hex);
-        // Refresh page or update DOM seamlessly
         setTimeout(() => { window.location.reload(); }, 1200);
       } else if (json.latest_measurement) {
         lastKnownId = json.latest_measurement.id;
@@ -331,7 +329,119 @@ function updateDevicePill(dev) {
   }
 }
 
-function showToast(msg, color = '#3B82F6') {
+// ---------------------------------------------------------------------
+// 4. BULK SELECTION & BULK DELETION
+// ---------------------------------------------------------------------
+function toggleSelectAll(master) {
+  const checkboxes = document.querySelectorAll('.row-check');
+  checkboxes.forEach(cb => {
+    cb.checked = master.checked;
+    const tr = cb.closest('tr');
+    if (tr) {
+      if (master.checked) tr.classList.add('selected');
+      else tr.classList.remove('selected');
+    }
+  });
+  updateBulkBar();
+}
+
+function onRowCheckChange(cb) {
+  const tr = cb.closest('tr');
+  if (tr) {
+    if (cb.checked) tr.classList.add('selected');
+    else tr.classList.remove('selected');
+  }
+
+  const master = document.getElementById('checkAll');
+  const all = document.querySelectorAll('.row-check');
+  const checked = document.querySelectorAll('.row-check:checked');
+  if (master) {
+    master.checked = (all.length > 0 && all.length === checked.length);
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const checked = document.querySelectorAll('.row-check:checked');
+  const bar = document.getElementById('bulk-action-bar');
+  const text = document.getElementById('bulk-count');
+  if (!bar) return;
+
+  if (checked.length > 0) {
+    bar.classList.add('visible');
+    if (text) text.textContent = `${checked.length} data terpilih`;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function clearSelection() {
+  const checkboxes = document.querySelectorAll('.row-check');
+  checkboxes.forEach(cb => {
+    cb.checked = false;
+    const tr = cb.closest('tr');
+    if (tr) tr.classList.remove('selected');
+  });
+  const master = document.getElementById('checkAll');
+  if (master) master.checked = false;
+  updateBulkBar();
+}
+
+async function confirmBulkDelete() {
+  const checked = document.querySelectorAll('.row-check:checked');
+  const ids = Array.from(checked).map(cb => parseInt(cb.value)).filter(id => !isNaN(id));
+
+  if (ids.length === 0) return;
+
+  if (!confirm(`Apakah Anda yakin ingin menghapus ${ids.length} data pengukuran yang dipilih? Data yang dihapus tidak dapat dikembalikan.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch('api.php?action=bulk_delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids })
+    });
+    const json = await res.json();
+    if (json.status === 'success') {
+      showToast(`${ids.length} data berhasil dihapus.`, '#DC2626');
+      setTimeout(() => { window.location.reload(); }, 800);
+    } else {
+      alert('Gagal menghapus: ' + json.message);
+    }
+  } catch (e) {
+    alert('Terjadi kesalahan koneksi saat menghapus data.');
+  }
+}
+
+// ---------------------------------------------------------------------
+// 5. SAMPLE NAME MANAGEMENT (EDIT / CLEAR NAMA SAMPEL)
+// ---------------------------------------------------------------------
+async function editSampleName(id, currentName = '') {
+  const newName = prompt('Ubah Nama Sampel Pengukuran (Kosongkan jika ingin menghapus nama):', currentName);
+  if (newName === null) return; // Batal
+
+  try {
+    const res = await fetch('api.php?action=update_sample_name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, sample_name: newName.trim() })
+    });
+    const json = await res.json();
+    if (json.status === 'success') {
+      showToast('Nama sampel berhasil diperbarui', '#059669');
+      setTimeout(() => { window.location.reload(); }, 600);
+    } else {
+      alert('Gagal: ' + json.message);
+    }
+  } catch (e) {
+    alert('Gagal memperbarui nama sampel.');
+  }
+}
+
+// Toast Notifikasi
+function showToast(msg, color = '#2563EB') {
   let box = document.getElementById('app-toast-box');
   if (!box) {
     box = document.createElement('div');
@@ -344,12 +454,13 @@ function showToast(msg, color = '#3B82F6') {
   }
 
   const toast = document.createElement('div');
-  toast.style.background = '#1E293B';
-  toast.style.color = '#FFFFFF';
+  toast.style.background = '#FFFFFF';
+  toast.style.color = '#0F172A';
   toast.style.padding = '12px 20px';
   toast.style.borderRadius = '12px';
+  toast.style.border = '1px solid #E2E8F0';
   toast.style.borderLeft = `5px solid ${color}`;
-  toast.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+  toast.style.boxShadow = '0 10px 25px rgba(0,0,0,0.08)';
   toast.style.marginBottom = '10px';
   toast.style.fontWeight = '500';
   toast.style.fontSize = '0.9rem';

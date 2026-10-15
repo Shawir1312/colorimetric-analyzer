@@ -1,5 +1,9 @@
 <?php
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+
+requireAuth();
+$currentUser = getLoggedInUser();
 
 $db = getDb();
 
@@ -67,7 +71,10 @@ if ($de76 < 1.0) {
       <a href="index.php" class="nav-link">📊 Dashboard</a>
       <a href="compare.php" class="nav-link active">⚖️ Bandingkan & ΔE</a>
       <a href="device.php" class="nav-link">📡 Perangkat & API</a>
-      <a href="install.php" class="nav-link" title="Pengaturan & Instalasi Database">⚙️ Setup</a>
+      <div class="user-menu">
+        <span class="user-badge">👤 <?= htmlspecialchars($currentUser['username'] ?? 'Admin') ?></span>
+        <a href="logout.php" class="btn btn-secondary btn-sm" title="Keluar dari sesi" style="padding: 0.35rem 0.75rem;">🚪 Keluar</a>
+      </div>
     </div>
   </nav>
 
@@ -154,25 +161,25 @@ if ($de76 < 1.0) {
         </div>
 
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; max-width: 600px; margin: 1.5rem auto 0 auto; text-align: left;">
-          <div style="background: rgba(31, 41, 55, 0.5); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary);">ΔL* (Kecerahan)</div>
-            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $dL >= 0 ? '#34D399' : '#F87171' ?>;">
+            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $dL >= 0 ? '#10B981' : '#EF4444' ?>;">
               <?= $dL >= 0 ? '+' : '' ?><?= number_format($dL, 2) ?>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-muted);"><?= $dL >= 0 ? 'Lebih terang' : 'Lebih gelap' ?></div>
           </div>
 
-          <div style="background: rgba(31, 41, 55, 0.5); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary);">Δa* (Merah-Hijau)</div>
-            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $da >= 0 ? '#F87171' : '#34D399' ?>;">
+            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $da >= 0 ? '#EF4444' : '#10B981' ?>;">
               <?= $da >= 0 ? '+' : '' ?><?= number_format($da, 2) ?>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-muted);"><?= $da >= 0 ? 'Lebih kemerahan' : 'Lebih kehijauan' ?></div>
           </div>
 
-          <div style="background: rgba(31, 41, 55, 0.5); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary);">Δb* (Kuning-Biru)</div>
-            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $dbVal >= 0 ? '#FBBF24' : '#60A5FA' ?>;">
+            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: <?= $dbVal >= 0 ? '#D97706' : '#2563EB' ?>;">
               <?= $dbVal >= 0 ? '+' : '' ?><?= number_format($dbVal, 2) ?>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-muted);"><?= $dbVal >= 0 ? 'Lebih kekuningan' : 'Lebih kebiruan' ?></div>

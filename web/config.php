@@ -23,7 +23,11 @@ define('MYSQL_USER', 'root');
 define('MYSQL_PASS', '');
 
 // Kunci Keamanan API (Wajib dikirim ESP32 pada header X-API-KEY)
-define('API_SECRET_KEY', 'colan_secret_2026');
+define('API_SECRET_KEY', 'color2026');
+
+// Akun Administrator Web
+define('ADMIN_USERNAME', 'admin');
+define('ADMIN_PASSWORD', 'admin123');
 
 // Informasi Aplikasi
 define('APP_NAME', 'Colorimetric Analyzer Web');

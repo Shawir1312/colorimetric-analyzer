@@ -1,5 +1,9 @@
 <?php
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+
+requireAuth();
+$currentUser = getLoggedInUser();
 
 $db = getDb();
 $device = $db->query("SELECT * FROM device_status ORDER BY last_seen DESC LIMIT 1")->fetch();
@@ -31,7 +35,10 @@ $apiUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "h
       <a href="index.php" class="nav-link">📊 Dashboard</a>
       <a href="compare.php" class="nav-link">⚖️ Bandingkan & ΔE</a>
       <a href="device.php" class="nav-link active">📡 Perangkat & API</a>
-      <a href="install.php" class="nav-link" title="Pengaturan & Instalasi Database">⚙️ Setup</a>
+      <div class="user-menu">
+        <span class="user-badge">👤 <?= htmlspecialchars($currentUser['username'] ?? 'Admin') ?></span>
+        <a href="logout.php" class="btn btn-secondary btn-sm" title="Keluar dari sesi" style="padding: 0.35rem 0.75rem;">🚪 Keluar</a>
+      </div>
     </div>
   </nav>
 
@@ -54,29 +61,29 @@ $apiUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "h
       </div>
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-        <div style="background: rgba(31, 41, 55, 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+        <div style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
           <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">DEVICE ID</div>
-          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-top: 0.25rem;">
+          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #0284C7; margin-top: 0.25rem;">
             <?= $device ? htmlspecialchars($device['device_id']) : 'Belum Terhubung' ?>
           </div>
         </div>
 
-        <div style="background: rgba(31, 41, 55, 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+        <div style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
           <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">KONDISI BATERAI</div>
-          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #34D399; margin-top: 0.25rem;">
+          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #059669; margin-top: 0.25rem;">
             <?= $device ? htmlspecialchars($device['bat_percent'] . '% (' . number_format($device['bat_voltage'], 2) . 'V)') : '100% (4.0V)' ?>
             <?= ($device && $device['charging']) ? '⚡' : '' ?>
           </div>
         </div>
 
-        <div style="background: rgba(31, 41, 55, 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+        <div style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
           <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">SINYAL WIFI (RSSI)</div>
-          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #FBBF24; margin-top: 0.25rem;">
+          <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #D97706; margin-top: 0.25rem;">
             <?= $device ? htmlspecialchars($device['rssi'] . ' dBm') : '- dBm' ?>
           </div>
         </div>
 
-        <div style="background: rgba(31, 41, 55, 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+        <div style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
           <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">TERAKHIR AKTIF</div>
           <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-top: 0.25rem;">
             <?= $device ? htmlspecialchars($device['last_seen']) : '-' ?>
@@ -91,9 +98,9 @@ $apiUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "h
         <div class="card-title">🔗 Endpoint API Pengiriman Data ESP32</div>
       </div>
 
-      <div style="background: #0F172A; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 1rem;">
+      <div style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-color); margin-bottom: 1rem;">
         <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.35rem;">URL API Server:</div>
-        <div style="font-family: var(--font-mono); font-size: 1rem; color: #38BDF8; word-break: break-all;">
+        <div style="font-family: var(--font-mono); font-size: 1rem; color: #0284C7; word-break: break-all;">
           <strong>POST</strong> <?= htmlspecialchars($apiUrl) ?>
         </div>
       </div>
@@ -102,7 +109,7 @@ $apiUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "h
         <label style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.35rem; font-weight: 600;">
           Contoh Payload JSON yang Dikirim ESP32:
         </label>
-        <pre style="background: #0F172A; padding: 1rem; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 0.82rem; color: #E2E8F0; overflow-x: auto; border: 1px solid var(--border-subtle);">{
+        <pre style="background: #F8FAFC; padding: 1rem; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 0.82rem; color: #0F172A; overflow-x: auto; border: 1px solid var(--border-color);">{
   "sample_name": "Sampel Daun Teh #01",
   "hex": "#4A7C59",
   "r": 74, "g": 124, "b": 89,
@@ -133,31 +140,39 @@ $apiUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "h
     <div class="card" style="margin-bottom: 1.5rem; border-left: 4px solid var(--accent-green);">
       <div class="card-header">
         <div class="card-title">⚙️ Konfigurasi Server & Database</div>
-        <a href="install.php" class="btn btn-secondary btn-sm">Buka Wizard Instalasi (install.php)</a>
+        <?php if (!file_exists(__DIR__ . '/installed.lock') && !file_exists(__DIR__ . '/data/installed.lock')): ?>
+          <a href="install.php" class="btn btn-secondary btn-sm">Buka Wizard Instalasi (install.php)</a>
+        <?php else: ?>
+          <span class="badge badge-green">🔒 Terkunci (Sudah Terinstall)</span>
+        <?php endif; ?>
       </div>
       <div class="card-body">
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
-          <div style="background: rgba(31, 41, 55, 0.4); padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">DRIVER DATABASE</div>
             <div style="font-size: 1rem; font-weight: 700; color: var(--text-primary); margin-top: 0.2rem;">
               <?= strtoupper(defined('DB_TYPE') ? DB_TYPE : 'SQLITE') ?>
             </div>
           </div>
-          <div style="background: rgba(31, 41, 55, 0.4); padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">ZONA WAKTU</div>
             <div style="font-size: 1rem; font-weight: 700; color: var(--accent-amber); margin-top: 0.2rem;">
               <?= defined('APP_TIMEZONE') ? APP_TIMEZONE : 'WIT (UTC+9)' ?>
             </div>
           </div>
-          <div style="background: rgba(31, 41, 55, 0.4); padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="background: #F8FAFC; padding: 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
             <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">API KEY ACTIVE</div>
-            <div style="font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--accent-cyan); margin-top: 0.2rem;">
+            <div style="font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: #0284C7; margin-top: 0.2rem;">
               <?= defined('API_SECRET_KEY') ? API_SECRET_KEY : 'colan_secret_2026' ?>
             </div>
           </div>
         </div>
         <p style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 0;">
-          Ingin mengganti zona waktu, beralih ke database MySQL cPanel, atau format ulang database? Gunakan <a href="install.php" style="color: var(--accent-blue); text-decoration: underline;">Halaman Instalasi 1-Klik (install.php)</a>.
+          <?php if (file_exists(__DIR__ . '/installed.lock') || file_exists(__DIR__ . '/data/installed.lock')): ?>
+            Instalasi telah selesai dan terkunci demi keamanan. Untuk mengkonfigurasi ulang, hapus file <code>installed.lock</code> di server Anda.
+          <?php else: ?>
+            Wizard instalasi dapat dibuka melalui <a href="install.php" style="color: var(--accent-blue); text-decoration: underline;">install.php</a>.
+          <?php endif; ?>
         </p>
       </div>
     </div>

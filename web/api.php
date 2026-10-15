@@ -266,7 +266,7 @@ if ($action === 'update_notes' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ---------------------------------------------------------------------
-// 6. HAPUS PENGUKURAN
+// 6. HAPUS PENGUKURAN (TUNGGAL ATAU MASSAL)
 // ---------------------------------------------------------------------
 if ($action === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawInput = file_get_contents('php://input');
@@ -277,6 +277,47 @@ if ($action === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute([':id' => $id]);
 
     jsonResponse(['status' => 'success', 'message' => 'Data berhasil dihapus']);
+}
+
+if ($action === 'bulk_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true) ?: $_POST;
+
+    $ids = $data['ids'] ?? [];
+    if (!is_array($ids) || empty($ids)) {
+        jsonResponse(['status' => 'error', 'message' => 'Daftar ID tidak valid'], 400);
+    }
+
+    $cleanIds = array_map('intval', $ids);
+    $inClause = implode(',', array_fill(0, count($cleanIds), '?'));
+    $stmt = $db->prepare("DELETE FROM measurements WHERE id IN ($inClause)");
+    $stmt->execute($cleanIds);
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => count($cleanIds) . ' data berhasil dihapus',
+        'deleted_count' => count($cleanIds)
+    ]);
+}
+
+// ---------------------------------------------------------------------
+// 6B. UBAH / HAPUS NAMA SAMPEL
+// ---------------------------------------------------------------------
+if ($action === 'update_sample_name' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true) ?: $_POST;
+
+    $id = (int)($data['id'] ?? 0);
+    $sampleName = trim($data['sample_name'] ?? '');
+
+    $stmt = $db->prepare("UPDATE measurements SET sample_name = :name WHERE id = :id");
+    $stmt->execute([':name' => $sampleName, ':id' => $id]);
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Nama sampel berhasil diperbarui',
+        'sample_name' => $sampleName
+    ]);
 }
 
 // ---------------------------------------------------------------------
