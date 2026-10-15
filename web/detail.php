@@ -49,7 +49,7 @@ $hslStr = sprintf('%d°, %d%%, %d%%', round($h * 360), round($s * 100), round($l
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Detail: <?= htmlspecialchars($item['sample_name'] ?: $item['hex']) ?> - <?= APP_NAME ?></title>
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261015_light_v4">
   <style>
     .swatch-hero {
       height: 140px;
@@ -158,13 +158,13 @@ $hslStr = sprintf('%d°, %d%%, %d%%', round($h * 360), round($s * 100), round($l
           </div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
-            <div style="background: #0F172A; border-radius: var(--radius-sm); padding: 0.75rem; text-align: center;">
-              <span style="display: inline-block; width: 22px; height: 22px; border-radius: 4px; background: <?= htmlspecialchars($item['hex']) ?>; vertical-align: middle;"></span>
-              <div style="font-size: 0.72rem; color: #94A3B8; margin-top: 4px;">Uji Latar Gelap</div>
+            <div style="background: #F0F7FF; border: 1px solid #BFDBFE; border-radius: var(--radius-sm); padding: 0.75rem; text-align: center;">
+              <span style="display: inline-block; width: 22px; height: 22px; border-radius: 4px; background: <?= htmlspecialchars($item['hex']) ?>; vertical-align: middle; border: 1px solid #CBD5E1;"></span>
+              <div style="font-size: 0.75rem; color: #1E3A8A; font-weight: 600; margin-top: 4px;">Uji Latar Biru Lembut</div>
             </div>
             <div style="background: #FFFFFF; border-radius: var(--radius-sm); padding: 0.75rem; text-align: center; border: 1px solid var(--border-subtle);">
-              <span style="display: inline-block; width: 22px; height: 22px; border-radius: 4px; background: <?= htmlspecialchars($item['hex']) ?>; vertical-align: middle;"></span>
-              <div style="font-size: 0.72rem; color: #475569; margin-top: 4px;">Uji Latar Terang</div>
+              <span style="display: inline-block; width: 22px; height: 22px; border-radius: 4px; background: <?= htmlspecialchars($item['hex']) ?>; vertical-align: middle; border: 1px solid #CBD5E1;"></span>
+              <div style="font-size: 0.75rem; color: #475569; font-weight: 600; margin-top: 4px;">Uji Latar Terang</div>
             </div>
           </div>
 

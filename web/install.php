@@ -46,7 +46,7 @@ if ($isInstalled) {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Instalasi Dikunci - Colorimetric Analyzer</title>
-      <link rel="stylesheet" href="assets/css/style.css">
+      <link rel="stylesheet" href="assets/css/style.css?v=20261015_light_v4">
       <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
       <style>
         body {
@@ -498,7 +498,7 @@ function insertDemoData(PDO $pdo, string $driver, string $tz): void {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Instalasi Server 1-Klik - Colorimetric Analyzer</title>
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261015_light_v4">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
   <style>
     .install-container {

@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Masuk - <?= defined('APP_NAME') ? APP_NAME : 'Colorimetric Analyzer' ?></title>
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261015_light_v4">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌈</text></svg>">
   <style>
     body {
@@ -54,33 +54,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       justify-content: center;
       min-height: 100vh;
       padding: 1.5rem;
-      background: #F8FAFC;
+      background: #FFFFFF;
       background-image: 
-        radial-gradient(circle at 15% 15%, rgba(37, 99, 235, 0.05) 0%, transparent 45%),
-        radial-gradient(circle at 85% 85%, rgba(16, 185, 129, 0.05) 0%, transparent 45%);
+        radial-gradient(circle at 15% 15%, rgba(37, 99, 235, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 85% 85%, rgba(245, 158, 11, 0.08) 0%, transparent 45%);
     }
     .login-card {
       width: 100%;
       max-width: 440px;
       background: #FFFFFF;
-      border: 1px solid #E2E8F0;
+      border: 2px solid #2563EB;
       border-radius: 20px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+      box-shadow: 0 12px 30px -5px rgba(37, 99, 235, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
       padding: 2.25rem;
     }
     .brand-icon-big {
-      width: 58px;
-      height: 58px;
+      width: 60px;
+      height: 60px;
       border-radius: 16px;
-      background: linear-gradient(135deg, #2563EB, #06B6D4);
+      background: #FACC15;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #FFFFFF;
-      font-size: 1.6rem;
-      font-weight: 800;
-      box-shadow: 0 8px 16px rgba(37, 99, 235, 0.25);
+      color: #1E3A8A;
+      font-size: 1.8rem;
+      font-weight: 900;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
       margin: 0 auto 1.25rem auto;
+      border: 2px solid #F59E0B;
     }
   </style>
 </head>

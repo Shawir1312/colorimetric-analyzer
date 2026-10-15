@@ -1,32 +1,53 @@
 /* =====================================================================
-   COLORIMETRIC ANALYZER - MODERN LIGHT LABORATORY DESIGN SYSTEM
-   Clean, Crisp, High-Contrast Scientific Aesthetic (Light Theme)
+   COLORIMETRIC ANALYZER - TEMA CERAH (PUTIH, BIRU, MERAH, KUNING)
+   Modern, Ultra-Bright, High-Contrast Laboratory Palette
    ===================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
-  --bg-main: #F8FAFC;
+  /* PALET WARNA UTAMA: PUTIH, BIRU, MERAH, KUNING */
+  --bg-main: #FFFFFF;
+  --bg-page-subtle: #F8FAFC;
   --bg-card: #FFFFFF;
-  --bg-card-hover: #F8FAFC;
+  --bg-card-hover: #F0F7FF;
   --bg-surface: #FFFFFF;
   --bg-modal: #FFFFFF;
 
-  --border-subtle: #E2E8F0;
-  --border-focus: #3B82F6;
-  --border-accent: rgba(37, 99, 235, 0.25);
-
-  --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-muted: #94A3B8;
-
+  /* BIRU (ROYAL & NAVY) */
+  --color-blue-dark: #1E3A8A;
+  --color-blue-primary: #2563EB;
+  --color-blue-hover: #1D4ED8;
+  --color-blue-light: #EFF6FF;
+  --color-blue-border: #BFDBFE;
   --accent-blue: #2563EB;
-  --accent-cyan: #0891B2;
-  --accent-green: #059669;
-  --accent-amber: #D97706;
+  --accent-cyan: #0284C7;
+
+  /* MERAH (CRIMSON & DANGER) */
+  --color-red-primary: #DC2626;
+  --color-red-hover: #B91C1C;
+  --color-red-light: #FEF2F2;
+  --color-red-border: #FECACA;
   --accent-red: #DC2626;
-  --accent-purple: #7C3AED;
-  --accent-pink: #DB2777;
+
+  /* KUNING (GOLD & AMBER) */
+  --color-yellow-primary: #F59E0B;
+  --color-yellow-hover: #D97706;
+  --color-yellow-light: #FEF9C3;
+  --color-yellow-border: #FDE047;
+  --color-yellow-bright: #FACC15;
+  --accent-amber: #D97706;
+  --accent-green: #059669;
+
+  /* TIPOGRAFI TERANG & TEGAS */
+  --text-primary: #0F172A;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
+  --text-blue: #1E40AF;
+
+  --border-subtle: #E2E8F0;
+  --border-card: #E2E8F0;
+  --border-focus: #2563EB;
 
   --font-main: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -36,8 +57,8 @@
   --radius-lg: 16px;
   --radius-full: 9999px;
 
-  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
-  --shadow-elevation: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --shadow-elevation: 0 10px 20px -3px rgba(37, 99, 235, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
 }
 
 *, *::before, *::after {
@@ -48,13 +69,13 @@
 
 body {
   font-family: var(--font-main);
-  background-color: var(--bg-main);
+  background-color: #FFFFFF;
   color: var(--text-primary);
   min-height: 100vh;
   line-height: 1.5;
   background-image: 
-    radial-gradient(circle at 12% 10%, rgba(37, 99, 235, 0.03) 0%, transparent 40%),
-    radial-gradient(circle at 88% 90%, rgba(5, 150, 105, 0.03) 0%, transparent 40%);
+    radial-gradient(circle at 10% 5%, rgba(37, 99, 235, 0.04) 0%, transparent 45%),
+    radial-gradient(circle at 90% 95%, rgba(245, 158, 11, 0.04) 0%, transparent 45%);
   background-attachment: fixed;
   overflow-x: hidden;
 }
@@ -65,7 +86,7 @@ body {
   height: 7px;
 }
 ::-webkit-scrollbar-track {
-  background: #F1F5F9;
+  background: #F8FAFC;
 }
 ::-webkit-scrollbar-thumb {
   background: #CBD5E1;
@@ -75,20 +96,20 @@ body {
   background: #94A3B8;
 }
 
-/* Top Navigation Bar */
+/* Top Navigation Bar: ROYAL BLUE DENGAN AKSEN KUNING EMAS */
 .navbar {
   position: sticky;
   top: 0;
   z-index: 50;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  background: rgba(255, 255, 255, 0.94);
-  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%);
+  border-bottom: 3px solid #F59E0B; /* Garis Aksen Kuning Emas */
   padding: 0.85rem 1.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  box-shadow: 0 4px 14px rgba(30, 58, 138, 0.2);
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .nav-brand {
@@ -96,49 +117,51 @@ body {
   align-items: center;
   gap: 0.75rem;
   text-decoration: none;
-  color: var(--text-primary);
 }
 
 .brand-logo {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+  background: #FACC15; /* Kuning Cerah */
+  color: #1E3A8A; /* Teks Biru Tua */
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 800;
-  font-size: 1.15rem;
-  color: white;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+  font-weight: 900;
+  font-size: 1.25rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
 }
 
 .brand-text h1 {
-  font-size: 1.15rem;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 800;
   line-height: 1.1;
-  color: #0F172A;
+  color: #FFFFFF; /* Putih Bersih */
+  letter-spacing: -0.01em;
 }
 
 .brand-text span {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  font-weight: 500;
+  font-size: 0.74rem;
+  color: #FEF08A; /* Kuning Lembut */
+  font-weight: 600;
 }
 
 .nav-links {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .nav-link {
-  color: var(--text-secondary);
+  color: #DBEAFE; /* Putih Kebiruan */
   text-decoration: none;
-  padding: 0.45rem 0.9rem;
+  padding: 0.45rem 0.95rem;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
-  font-weight: 500;
+  font-weight: 600;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
@@ -146,46 +169,49 @@ body {
 }
 
 .nav-link:hover {
-  color: var(--accent-blue);
-  background: #F1F5F9;
+  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .nav-link.active {
-  color: var(--accent-blue);
-  background: #EFF6FF;
-  font-weight: 600;
+  color: #1E3A8A;
+  background: #FEF08A; /* Pill Kuning Terang Aktif */
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
-/* User & Logout Button */
+/* User & Logout */
 .user-menu {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding-left: 0.5rem;
-  border-left: 1px solid var(--border-subtle);
-  margin-left: 0.5rem;
+  gap: 0.65rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
 }
 
 .user-badge {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  font-weight: 600;
+  font-size: 0.84rem;
+  color: #FFFFFF;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-full);
 }
 
-/* Device Telemetry Widget in Nav */
+/* Telemetry Widget in Nav */
 .device-telemetry-badge {
   display: flex;
   align-items: center;
   gap: 0.65rem;
   background: #FFFFFF;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #BFDBFE;
   padding: 0.4rem 0.85rem;
   border-radius: var(--radius-full);
   font-size: 0.82rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.06);
 }
 
 .status-dot {
@@ -220,7 +246,7 @@ body {
 /* Cards */
 .card {
   background: #FFFFFF;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #E2E8F0;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
@@ -229,23 +255,23 @@ body {
 }
 
 .card:hover {
-  border-color: #CBD5E1;
+  border-color: #BFDBFE;
   box-shadow: var(--shadow-elevation);
 }
 
 .card-header {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.95rem 1.25rem;
+  border-bottom: 1px solid #E2E8F0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #FAFAFA;
+  background: #F8FAFC;
 }
 
 .card-title {
-  font-size: 0.98rem;
+  font-size: 1rem;
   font-weight: 700;
-  color: #0F172A;
+  color: #1E3A8A; /* Navy Blue */
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -253,9 +279,10 @@ body {
 
 .card-body {
   padding: 1.25rem;
+  background: #FFFFFF;
 }
 
-/* Metric Stats Row */
+/* Metric Stats Row (Putih dengan aksen Biru, Kuning, Merah) */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
@@ -265,7 +292,7 @@ body {
 
 .stat-card {
   background: #FFFFFF;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #E2E8F0;
   border-radius: var(--radius-md);
   padding: 1.15rem;
   box-shadow: var(--shadow-card);
@@ -279,10 +306,23 @@ body {
   box-shadow: var(--shadow-elevation);
 }
 
+.stat-card:nth-child(1) {
+  border-top: 4px solid #2563EB; /* Aksen Biru */
+}
+.stat-card:nth-child(2) {
+  border-top: 4px solid #F59E0B; /* Aksen Kuning Emas */
+}
+.stat-card:nth-child(3) {
+  border-top: 4px solid #1E3A8A; /* Aksen Navy Blue */
+}
+.stat-card:nth-child(4) {
+  border-top: 4px solid #DC2626; /* Aksen Merah */
+}
+
 .stat-title {
   font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: #64748B;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -290,14 +330,14 @@ body {
 .stat-value {
   font-size: 1.7rem;
   font-weight: 800;
-  color: var(--text-primary);
+  color: #0F172A;
   margin-top: 0.35rem;
   line-height: 1.2;
 }
 
 .stat-sub {
   font-size: 0.78rem;
-  color: var(--text-muted);
+  color: #64748B;
   margin-top: 0.3rem;
 }
 
@@ -321,7 +361,7 @@ body {
   border-radius: var(--radius-md);
   overflow: hidden;
   background: #FFFFFF;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #E2E8F0;
 }
 
 canvas {
@@ -333,6 +373,7 @@ canvas {
 .table-responsive {
   width: 100%;
   overflow-x: auto;
+  background: #FFFFFF;
 }
 
 .table {
@@ -340,37 +381,39 @@ canvas {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.88rem;
+  background: #FFFFFF;
 }
 
 .table th {
-  background: #F8FAFC;
-  color: #475569;
-  font-weight: 600;
+  background: #F0F7FF; /* Biru Sangat Lembut */
+  color: #1E3A8A; /* Navy Blue */
+  font-weight: 700;
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.85rem 1rem;
+  border-bottom: 2px solid #BFDBFE;
   white-space: nowrap;
 }
 
 .table td {
   padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
+  border-bottom: 1px solid #E2E8F0;
+  color: #0F172A;
   vertical-align: middle;
+  background: #FFFFFF;
 }
 
 .table tbody tr {
   transition: background 0.15s ease;
 }
 
-.table tbody tr:hover {
-  background: #F8FAFC;
+.table tbody tr:hover td {
+  background: #F8FAFC !important;
 }
 
-.table tbody tr.selected {
-  background: #EFF6FF !important;
+.table tbody tr.selected td {
+  background: #EFF6FF !important; /* Highlight Biru Terpilih */
 }
 
 /* Swatch Color Preview Pill */
@@ -381,10 +424,11 @@ canvas {
   padding: 0.25rem 0.6rem 0.25rem 0.35rem;
   border-radius: var(--radius-full);
   background: #F8FAFC;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #CBD5E1;
   font-family: var(--font-mono);
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 700;
+  color: #0F172A;
 }
 
 .color-dot {
@@ -396,16 +440,16 @@ canvas {
   flex-shrink: 0;
 }
 
-/* Buttons */
+/* Buttons (Putih, Biru, Merah, Kuning) */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  padding: 0.55rem 1.1rem;
+  padding: 0.55rem 1.15rem;
   border-radius: var(--radius-sm);
   font-size: 0.86rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   text-decoration: none;
   border: 1px solid transparent;
@@ -413,40 +457,58 @@ canvas {
   font-family: var(--font-main);
 }
 
+/* BIRU (Primary) */
 .btn-primary {
-  background: var(--accent-blue);
-  color: white;
-  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+  background: #2563EB;
+  color: #FFFFFF;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25);
 }
 .btn-primary:hover {
   background: #1D4ED8;
-  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
 }
 
+/* PUTIH (Secondary) */
 .btn-secondary {
   background: #FFFFFF;
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  color: #1E3A8A;
+  border: 1px solid #CBD5E1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 .btn-secondary:hover {
-  background: #F1F5F9;
-  border-color: #CBD5E1;
+  background: #F0F7FF;
+  border-color: #2563EB;
+  color: #2563EB;
 }
 
-.btn-success {
-  background: var(--accent-green);
-  color: white;
-}
-.btn-success:hover {
-  background: #047857;
-}
-
+/* MERAH (Danger) */
 .btn-danger {
-  background: var(--accent-red);
-  color: white;
+  background: #DC2626;
+  color: #FFFFFF;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.25);
 }
 .btn-danger:hover {
   background: #B91C1C;
+  box-shadow: 0 4px 10px rgba(220, 38, 38, 0.35);
+}
+
+/* KUNING (Warning / Highlight) */
+.btn-warning, .btn-yellow {
+  background: #F59E0B;
+  color: #FFFFFF;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.25);
+}
+.btn-warning:hover, .btn-yellow:hover {
+  background: #D97706;
+  box-shadow: 0 4px 10px rgba(245, 158, 11, 0.35);
+}
+
+.btn-success {
+  background: #059669;
+  color: #FFFFFF;
+}
+.btn-success:hover {
+  background: #047857;
 }
 
 .btn-sm {
@@ -463,32 +525,36 @@ canvas {
   padding: 0.25rem 0.65rem;
   border-radius: var(--radius-full);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
 }
 
-.badge-green, .badge-success {
-  background: #ECFDF5;
-  color: #065F46;
-  border: 1px solid #A7F3D0;
-}
-
+/* Badge Biru */
 .badge-blue {
   background: #EFF6FF;
   color: #1E40AF;
   border: 1px solid #BFDBFE;
 }
 
-.badge-amber, .badge-warning {
-  background: #FFFBEB;
-  color: #92400E;
-  border: 1px solid #FDE68A;
-}
-
+/* Badge Merah */
 .badge-red, .badge-danger {
   background: #FEF2F2;
-  color: #991B1B;
+  color: #DC2626;
   border: 1px solid #FECACA;
+}
+
+/* Badge Kuning */
+.badge-amber, .badge-warning, .badge-yellow {
+  background: #FEF9C3;
+  color: #A16207;
+  border: 1px solid #FDE047;
+}
+
+/* Badge Hijau */
+.badge-green, .badge-success {
+  background: #ECFDF5;
+  color: #065F46;
+  border: 1px solid #A7F3D0;
 }
 
 /* Alerts */
@@ -498,6 +564,7 @@ canvas {
   margin-bottom: 1.25rem;
   font-size: 0.88rem;
   line-height: 1.5;
+  font-weight: 500;
 }
 
 .alert-success {
@@ -513,9 +580,9 @@ canvas {
 }
 
 .alert-warning {
-  background: #FFFBEB;
-  color: #92400E;
-  border: 1px solid #FDE68A;
+  background: #FEF9C3;
+  color: #A16207;
+  border: 1px solid #FDE047;
 }
 
 /* Forms */
@@ -526,8 +593,8 @@ canvas {
 .form-label {
   display: block;
   font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: #334155;
   margin-bottom: 0.4rem;
 }
 
@@ -535,9 +602,9 @@ canvas {
   width: 100%;
   padding: 0.65rem 0.95rem;
   background: #FFFFFF;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #CBD5E1;
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
+  color: #0F172A;
   font-family: var(--font-main);
   font-size: 0.9rem;
   transition: all 0.2s ease;
@@ -545,20 +612,20 @@ canvas {
 
 .form-control:focus {
   outline: none;
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  border-color: #2563EB;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
-/* Floating Bulk Action Bar */
+/* Floating Bulk Action Bar (Merah & Putih) */
 .bulk-bar {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%) translateY(120px);
   background: #FFFFFF;
-  border: 1px solid #CBD5E1;
+  border: 2px solid #2563EB; /* Border Biru Tegas */
   border-radius: var(--radius-full);
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
   padding: 0.65rem 1.4rem;
   display: flex;
   align-items: center;
@@ -572,17 +639,17 @@ canvas {
 }
 
 .bulk-text {
-  font-weight: 600;
-  font-size: 0.88rem;
-  color: #0F172A;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #1E3A8A;
 }
 
 /* Checkbox styling */
 input[type="checkbox"] {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
-  accent-color: var(--accent-blue);
+  accent-color: #2563EB;
   border-radius: 4px;
 }
 
@@ -590,7 +657,7 @@ input[type="checkbox"] {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(15, 23, 42, 0.4);
   backdrop-filter: blur(4px);
   z-index: 999;
   display: none;
@@ -606,11 +673,57 @@ input[type="checkbox"] {
 .modal-content {
   background: #FFFFFF;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid #E2E8F0;
   width: 100%;
   max-width: 480px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+}
+
+/* Komparasi Swatch */
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .compare-grid {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+}
+
+.compare-swatch {
+  height: 160px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  position: relative;
+  box-shadow: var(--shadow-card);
+  border: 2px solid #E2E8F0;
+}
+
+.vs-badge {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 2px solid #2563EB;
+  color: #2563EB;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  box-shadow: var(--shadow-card);
+  margin: 0 auto;
 }
 
 /* Print CSS */

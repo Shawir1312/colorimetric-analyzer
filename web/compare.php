@@ -54,7 +54,7 @@ if ($de76 < 1.0) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bandingkan Warna & Analisis ΔE - <?= APP_NAME ?></title>
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261015_light_v4">
 </head>
 <body>
 
@@ -128,7 +128,7 @@ if ($de76 < 1.0) {
       <div class="compare-grid">
         <div class="card compare-swatch" style="background-color: <?= htmlspecialchars($s1['hex']) ?>;">
           <div class="swatch-hero-hex"><?= htmlspecialchars($s1['hex']) ?></div>
-          <div style="background: rgba(0,0,0,0.7); padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; color: #FFF;">
+          <div style="background: rgba(255,255,255,0.95); border: 1px solid #CBD5E1; padding: 4px 14px; border-radius: 6px; font-weight: 700; font-size: 0.9rem; color: #1E3A8A; box-shadow: 0 2px 5px rgba(0,0,0,0.08);">
             <?= htmlspecialchars($s1['sample_name']) ?>
           </div>
         </div>
@@ -140,7 +140,7 @@ if ($de76 < 1.0) {
 
         <div class="card compare-swatch" style="background-color: <?= htmlspecialchars($s2['hex']) ?>;">
           <div class="swatch-hero-hex"><?= htmlspecialchars($s2['hex']) ?></div>
-          <div style="background: rgba(0,0,0,0.7); padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; color: #FFF;">
+          <div style="background: rgba(255,255,255,0.95); border: 1px solid #CBD5E1; padding: 4px 14px; border-radius: 6px; font-weight: 700; font-size: 0.9rem; color: #1E3A8A; box-shadow: 0 2px 5px rgba(0,0,0,0.08);">
             <?= htmlspecialchars($s2['sample_name']) ?>
           </div>
         </div>
