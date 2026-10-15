@@ -72,6 +72,7 @@
 #include <Wire.h>
 #include <XPT2046_Touchscreen.h>
 #include <math.h>
+#include <qrcode.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -184,7 +185,8 @@ struct Result {
 struct HistEntry {
   uint32_t ts;
   uint8_t relative;
-  uint8_t pad[3];
+  uint8_t synced; // 0 = offline (belum sync), 1 = sudah di-sync ke web
+  uint8_t pad[2];
   float R[8];
 };
 
@@ -1609,6 +1611,13 @@ void drawHistory() {
     txt(rw.x + 44, rw.y + 4, b, COL_TXT, F9B);
     dateStr(r.ts, b, sizeof(b));
     txt(rw.x + 44, rw.y + 24, b, COL_MUTED, nullptr, 1);
+    if (hist[idx].synced) {
+      tft.fillCircle(rw.x + 164, rw.y + 21, 3, COL_GREEN);
+      txt(rw.x + 172, rw.y + 24, "Web", COL_GREEN, nullptr, 1);
+    } else {
+      tft.fillCircle(rw.x + 164, rw.y + 21, 3, COL_ORANGE);
+      txt(rw.x + 172, rw.y + 24, "Offline", COL_ORANGE, nullptr, 1);
+    }
     if (r.hasDE) {
       snprintf(b, sizeof(b), "dE %.2f", r.dE);
       txt(rw.x + 270, rw.y + 12, b, COL_TXT, F9, 1, 2);
@@ -2768,23 +2777,85 @@ void timeAdjust(int i, int d) {
   editTm.tm_mday = dd;
 }
 
+// ======================= QR CODE / BARCODE =======================
+struct QrDrawTarget {
+  int x;
+  int y;
+  int scale;
+};
+static QrDrawTarget s_qrTarget;
+
+static void drawQrCallback(esp_qrcode_handle_t qrcode) {
+  int size = esp_qrcode_get_size(qrcode);
+  int scale = s_qrTarget.scale;
+  int border = 4;
+  int totalW = size * scale + border * 2;
+  int startX = s_qrTarget.x - totalW / 2;
+  int startY = s_qrTarget.y - totalW / 2;
+
+  // Background putih bersih dengan sudut membulat (Quiet Zone)
+  tft.fillRoundRect(startX, startY, totalW, totalW, 4, 0xFFFF);
+
+  // Gambar modul hitam QR code
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      if (esp_qrcode_get_module(qrcode, x, y)) {
+        tft.fillRect(startX + border + x * scale, startY + border + y * scale,
+                     scale, scale, 0x0000);
+      }
+    }
+  }
+}
+
+void drawQrOnTft(int centerX, int centerY, const char *text, int scale) {
+  s_qrTarget.x = centerX;
+  s_qrTarget.y = centerY;
+  s_qrTarget.scale = scale;
+
+  esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+  cfg.display_func = drawQrCallback;
+  cfg.max_qrcode_version = 10;
+  cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
+
+  esp_qrcode_generate(&cfg, text);
+}
+
 // ======================= UI: TENTANG & KONFIRMASI =======================
 void drawAbout() {
   tft.fillScreen(COL_BG);
-  drawHeader("Tentang", true);
-  drawLogo(160, 52, 12);
-  txt(160, 80, "Colorimetric Analyzer", COL_TXT, F9B, 1, 1);
-  card(40, 102, 240, 108);
+  drawHeader("Tentang Alat", true);
+
+  // KARTU KIRI: Informasi Spesifikasi Perangkat
+  card(8, 38, 168, 178);
+  drawLogo(26, 54, 10);
+  txt(42, 53, "Colorimetric", COL_TXT, F9B);
+  txt(42, 67, "Analyzer 8-Band", COL_BLUE, nullptr, 1);
+  tft.drawFastHLine(16, 73, 152, COL_LINE);
+
   const char *k[6] = {"Hardware", "Firmware", "Sensor",
-                      "Display",  "MCU",      "Dibuat oleh"};
-  const char *v[6] = {"v1.0",     FW_VERSION, "AS7341", "ILI9341 (3.2\")",
-                      "ESP32-S2", "Mushawir "};
+                      "Layar",     "MCU",      "Pembuat"};
+  const char *v[6] = {"v1.0",     FW_VERSION, "AS7341",
+                      "3.2\" TFT", "ESP32-S2", "Mushawir"};
   for (int i = 0; i < 6; i++) {
-    int y = 108 + i * 16;
-    txt(54, y, k[i], COL_MUTED, F9);
-    txt(266, y, v[i], COL_TXT, F9, 1, 2);
+    int y = 85 + i * 18;
+    txt(16, y, k[i], COL_MUTED, nullptr, 1);
+    txt(168, y, v[i], COL_TXT, nullptr, 1, 2);
   }
-  txt(160, 220, "(c) 2026 Shawir", COL_MUTED, nullptr, 1, 1);
+  tft.drawFastHLine(16, 194, 152, COL_LINE);
+  txt(92, 204, "(c) 2026 Shawir", COL_MUTED, nullptr, 1, 1);
+
+  // KARTU KANAN: QR Code / Barcode Menuju Web Dashboard
+  card(184, 38, 128, 178);
+  txt(248, 52, "Web Portal", COL_TXT, F9B, 1, 1);
+
+  // Barcode / QR Code langsung mengarah ke https://color.shawir.id
+  drawQrOnTft(248, 110, "https://color.shawir.id", 3);
+
+  txt(248, 166, "color.shawir.id", COL_BLUE, nullptr, 1, 1);
+  txt(248, 182, "Pindai untuk Buka", COL_TXT, nullptr, 1, 1);
+  txt(248, 196, "Dashboard di HP/PC", COL_MUTED, nullptr, 1, 1);
+
+  txt(160, 228, "Ketuk panah kiri di atas untuk kembali", COL_MUTED, nullptr, 1, 1);
 }
 
 const Rect R_CF_NO = {30, 170, 120, 38};
@@ -3022,9 +3093,19 @@ bool uploadResultToWeb(const Result &r) {
   http.addHeader("X-API-KEY", webApiKey);
   http.setTimeout(5000);
 
-  char payload[640];
+  char payload[750];
   char dateBuf[32];
   dateStr(r.ts, dateBuf, sizeof(dateBuf));
+
+  char isoBuf[64] = "";
+  if (r.ts > 1700000000) {
+    time_t t = r.ts;
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    snprintf(isoBuf, sizeof(isoBuf), ",\"created_at\":\"%04d-%02d-%02d %02d:%02d:%02d\"",
+             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour,
+             tmv.tm_min, tmv.tm_sec);
+  }
 
   snprintf(payload, sizeof(payload),
            "{\"sample_name\":\"Sampel %s\","
@@ -3037,18 +3118,71 @@ bool uploadResultToWeb(const Result &r) {
            "\"nir\":%.2f,\"clear\":%.2f,"
            "\"led_ma\":%d,\"gain\":\"%s\",\"samples\":%d,"
            "\"device_id\":\"ESP32S2_COLORIMETER\","
-           "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d,"
+           "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d"
+           "%s,"
            "\"api_key\":\"%s\"}",
            dateBuf, r.rr, r.gg, r.bb, r.rr, r.gg, r.bb, r.cx, r.cy,
            (1.0f - r.cx - r.cy), r.L, r.a, r.b, r.hasDE ? r.dE : 0.0f,
            r.relative ? 1 : 0, r.R[0], r.R[1], r.R[2], r.R[3], r.R[4], r.R[5],
            r.R[6], r.R[7], r.nir, r.clr, LED_OPTS[cfg.ledIdx],
            GAIN_TXT[cfg.gainIdx], N_OPTS[cfg.nIdx], batVoltage, batPercent,
-           batCharging ? 1 : 0, WiFi.RSSI(), webApiKey);
+           batCharging ? 1 : 0, WiFi.RSSI(), isoBuf, webApiKey);
 
   int code = http.POST(payload);
   http.end();
   return (code >= 200 && code < 300);
+}
+
+// ======================= SINKRONISASI DATA OFFLINE =======================
+int countUnsynced() {
+  int c = 0;
+  for (int i = 0; i < histCount; i++) {
+    if (hist[i].synced == 0)
+      c++;
+  }
+  return c;
+}
+
+void syncOfflineMeasurements() {
+  if (WiFi.status() != WL_CONNECTED || webApiUrl[0] == 0 || histCount == 0)
+    return;
+
+  int unsynced = countUnsynced();
+  if (unsynced == 0)
+    return;
+
+  Serial.printf("[SYNC] Menemukan %d data offline. Memulai sinkronisasi otomatis...\n", unsynced);
+
+  int syncedNow = 0;
+  bool changed = false;
+
+  // Unggah dari item terlama ke terbaru agar kronologis di server rapi
+  for (int i = histCount - 1; i >= 0; i--) {
+    if (hist[i].synced == 0) {
+      Result r;
+      histToResult(hist[i], r);
+      if (uploadResultToWeb(r)) {
+        hist[i].synced = 1;
+        syncedNow++;
+        changed = true;
+        delay(120); // Jeda kecil agar transmisi stabil
+      } else {
+        Serial.printf("[SYNC] Gagal mengunggah item indeks %d, coba lagi nanti\n", i);
+        break;
+      }
+    }
+  }
+
+  if (changed) {
+    saveHist();
+  }
+
+  if (syncedNow > 0) {
+    char toastBuf[48];
+    snprintf(toastBuf, sizeof(toastBuf), "Auto-Sync: %d data terunggah!", syncedNow);
+    toast(toastBuf, COL_GREEN);
+    Serial.printf("[SYNC] Berhasil sinkronisasi %d data ke web!\n", syncedNow);
+  }
 }
 
 // ======================= AKSI =======================
@@ -3067,20 +3201,25 @@ void saveCurrent() {
   hist[0].relative = cur.relative ? 1 : 0;
   for (int i = 0; i < 8; i++)
     hist[0].R[i] = cur.R[i];
+  hist[0].synced = 0; // Default offline
   histCount = n + 1;
-  saveHist();
-  saveEpoch();
   cur.saved = true;
 
   bool webOk = false;
   if (wifiUp()) {
     webOk = uploadResultToWeb(cur);
+    if (webOk) {
+      hist[0].synced = 1; // Ditandai tersinkronisasi jika online
+    }
   }
+
+  saveHist();
+  saveEpoch();
 
   if (webOk) {
     toast("Tersimpan & Diunggah ke Web!", COL_GREEN);
   } else {
-    toast("Tersimpan ke riwayat", COL_GREEN);
+    toast("Tersimpan offline (antre sync)", COL_YELLOW);
   }
 }
 
@@ -3582,6 +3721,11 @@ void setup() {
     touchCalFinishScreen();
   }
 
+  if (WiFi.status() == WL_CONNECTED) {
+    sendWebPing();
+    syncOfflineMeasurements();
+  }
+
   goScreen(S_HOME);
 }
 
@@ -3624,8 +3768,8 @@ void loop() {
     if (curWifiSt == WL_CONNECTED) {
       configTime(9 * 3600, 0, "pool.ntp.org", "id.pool.ntp.org",
                  "time.google.com");
-      sendWebPing(); // Kirim status telemetri ke server seketika begitu
-                     // terhubung
+      sendWebPing(); // Kirim status telemetri ke server seketika begitu terhubung
+      syncOfflineMeasurements(); // Otomatis sinkronkan data offline begitu WiFi aktif
     }
     if (scr != S_BOOT && scr != S_PROCESS) {
       drawWifiIcon();
@@ -3650,6 +3794,7 @@ void loop() {
   if (curWifiSt == WL_CONNECTED && (now - lastPingLoop > 25000)) {
     lastPingLoop = now;
     sendWebPing();
+    syncOfflineMeasurements(); // Cek berkala jika ada data offline yang belum tersinkronisasi
   }
 
   // Periksa baterai & status cas secara berkala

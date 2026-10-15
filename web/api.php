@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'upload' || !isset($_G
         }
 
         // Parse data warna & spektrum
-        $nowStr = date('Y-m-d H:i:s');
+        $nowStr = !empty($data['created_at']) ? trim($data['created_at']) : date('Y-m-d H:i:s');
         $sampleName = !empty($data['sample_name']) ? trim($data['sample_name']) : ('Sampel #' . date('d-m-Y H:i:s'));
         $hex = !empty($data['hex']) ? strtoupper(trim($data['hex'])) : '#888888';
         if ($hex[0] !== '#') $hex = '#' . $hex;
