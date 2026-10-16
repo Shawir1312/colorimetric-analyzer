@@ -108,6 +108,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'upload' || !isset($_G
         $charging = !empty($data['charging']) ? 1 : 0;
         $rssi = (int)($data['rssi'] ?? 0);
         $notes = (string)($data['notes'] ?? '');
+        $metalType = !empty($data['metal_type']) ? trim($data['metal_type']) : null;
+        $metalConc = isset($data['metal_conc']) ? (float)$data['metal_conc'] : (isset($data['ppm']) ? (float)$data['ppm'] : null);
+        $metalUnit = !empty($data['metal_unit']) ? trim($data['metal_unit']) : 'mg/L';
+        $peakWl = isset($data['peak_wl']) ? (int)$data['peak_wl'] : null;
+        $waterStatus = !empty($data['water_status']) ? trim($data['water_status']) : null;
+        $indicator = !empty($data['indicator']) ? trim($data['indicator']) : null;
+
         $fw = (string)($data['fw_version'] ?? 'v1.2.0');
         $ip = $_SERVER['REMOTE_ADDR'] ?? '';
 
@@ -115,11 +122,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'upload' || !isset($_G
             INSERT INTO measurements (
                 sample_name, hex, r, g, b, cie_x, cie_y, cie_z, lab_l, lab_a, lab_b, de, is_relative,
                 f1_415, f2_445, f3_480, f4_515, f5_555, f6_590, f7_630, f8_680, nir, clear,
-                led_ma, gain, samples, device_id, device_bat_v, device_bat_pct, charging, rssi, notes, created_at
+                led_ma, gain, samples, device_id, device_bat_v, device_bat_pct, charging, rssi, notes,
+                metal_type, metal_conc, metal_unit, peak_wl, water_status, indicator, created_at
             ) VALUES (
                 :name, :hex, :r, :g, :b, :cx, :cy, :cz, :ll, :la, :lb, :de, :rel,
                 :f1, :f2, :f3, :f4, :f5, :f6, :f7, :f8, :nir, :clr,
-                :led, :gain, :smp, :dev, :bv, :bp, :chg, :rssi, :notes, :created_at
+                :led, :gain, :smp, :dev, :bv, :bp, :chg, :rssi, :notes,
+                :m_type, :m_conc, :m_unit, :m_pwl, :m_stat, :m_ind, :created_at
             )
         ");
 
@@ -130,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'upload' || !isset($_G
             ':f4' => $f4, ':f5' => $f5, ':f6' => $f6, ':f7' => $f7, ':f8' => $f8,
             ':nir' => $nir, ':clr' => $clr, ':led' => $ledMa, ':gain' => $gain, ':smp' => $samples,
             ':dev' => $devId, ':bv' => $batV, ':bp' => $batPct, ':chg' => $charging, ':rssi' => $rssi,
-            ':notes' => $notes, ':created_at' => $nowStr
+            ':notes' => $notes, ':m_type' => $metalType, ':m_conc' => $metalConc, ':m_unit' => $metalUnit, ':m_pwl' => $peakWl, ':m_stat' => $waterStatus, ':m_ind' => $indicator, ':created_at' => $nowStr
         ]);
 
         $insertId = (int)$db->lastInsertId();

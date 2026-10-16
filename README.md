@@ -19,6 +19,10 @@ Alat analisis warna spektral mandiri (*portable spectrophotometer / colorimeter*
   - Tampilan GUI responsif di layar TFT 3.2" (resolusi 320x240)
   - Kalibrasi touch 5-titik tersimpan di Preferences/NVS
   - Keyboard virtual untuk konfigurasi WiFi
+- **Klasifikasi Logam Berat (DECISION_TREE_LOGIC)**:
+  - Model inferensi tertanam (*embedded machine learning*) berbasis Decision Tree (CART).
+  - Deteksi Timbal (Pb), Merkuri (Hg), Tembaga (Cu), dan Besi (Fe).
+  - Evaluasi batas Baku Mutu dan estimasi konsentrasi (mg/L) secara mandiri di perangkat.
 - **WiFi & OTA Update (Over-The-Air)**:
   - Pemindaian WiFi langsung dari layar alat
   - Cek dan instal pembaruan firmware otomatis dari **GitHub Releases**

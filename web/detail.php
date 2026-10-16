@@ -226,6 +226,55 @@ $hslStr = sprintf('%d°, %d%%, %d%%', round($h * 360), round($s * 100), round($l
 
       <!-- Kolom Kanan -->
       <div>
+
+        <!-- Kartu Hasil Uji Logam Berat (Jika Sampel Logam) -->
+        <?php if (!empty($item['metal_type']) || strpos(strtolower($item['sample_name']), 'cu') !== false || strpos(strtolower($item['sample_name']), 'fe') !== false || strpos(strtolower($item['sample_name']), 'hg') !== false || strpos(strtolower($item['sample_name']), 'pb') !== false): 
+          $mType = !empty($item['metal_type']) ? $item['metal_type'] : 'Logam Berat';
+          $mConc = isset($item['metal_conc']) ? (float)$item['metal_conc'] : 0.0;
+          $mUnit = !empty($item['metal_unit']) ? $item['metal_unit'] : 'mg/L';
+          $pWl = !empty($item['peak_wl']) ? $item['peak_wl'] : 415;
+          $stat = !empty($item['water_status']) ? $item['water_status'] : 'Hasil Analisis';
+          $isDanger = (strpos(strtoupper($stat), 'TERCEMAR') !== false || strpos(strtoupper($stat), 'BAHAYA') !== false);
+        ?>
+        <div class="card" style="margin-bottom: 1.25rem; border-left: 5px solid <?= $isDanger ? 'var(--accent-red, #EF4444)' : 'var(--accent-green, #10B981)' ?>;">
+          <div class="card-header" style="background: rgba(<?= $isDanger ? '239, 68, 68, 0.06' : '16, 185, 129, 0.06' ?>);">
+            <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
+              <span>⚗️ Parameter Uji Logam Berat: <strong><?= htmlspecialchars($mType) ?></strong></span>
+            </div>
+            <span class="badge <?= $isDanger ? 'badge-red' : 'badge-green' ?>" style="font-size: 0.82rem; padding: 4px 10px;">
+              <?= $isDanger ? '⚠️ ' . htmlspecialchars($stat) : '✅ ' . htmlspecialchars($stat) ?>
+            </span>
+          </div>
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
+              <div style="background: #FFF; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase;">Konsentrasi Logam Terukur</div>
+                <div style="font-family: var(--font-mono); font-size: 1.6rem; font-weight: 800; color: <?= $isDanger ? '#DC2626' : '#059669' ?>; margin-top: 4px;">
+                  <?= number_format($mConc, 3) ?> <span style="font-size: 0.95rem; font-weight: 600; color: #475569;"><?= htmlspecialchars($mUnit) ?></span>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">1 mg/L = 1 ppm = 1.000 ppb</div>
+              </div>
+
+              <div style="background: #FFF; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase;">Panjang Gelombang Kunci (λ)</div>
+                <div style="font-family: var(--font-mono); font-size: 1.3rem; font-weight: 800; color: #1E40AF; margin-top: 4px;">
+                  λ = <?= $pWl ?> nm
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">Resonansi Plasmon (AS7341 Channel)</div>
+              </div>
+
+              <div style="background: #FFF; padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase;">Metode Indikator Bahan Alam</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #0F172A; margin-top: 6px;">
+                  <?= !empty($item['indicator']) ? htmlspecialchars($item['indicator']) : 'AgNP + Ekstrak Alami' ?>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">Green Synthesis Biosensor</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Ruang Warna -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">

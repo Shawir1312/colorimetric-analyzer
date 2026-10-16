@@ -251,6 +251,11 @@ foreach ($measurements as $m) {
                       <span style="font-weight: 600; color: var(--text-primary); font-size: 0.9rem;">
                         <?= htmlspecialchars($row['sample_name'] ?: 'Tanpa Nama') ?>
                       </span>
+                      <?php if (!empty($row['metal_type'])): ?>
+                        <span class="badge <?= (strpos(strtoupper($row['water_status'] ?? ''), 'TERCEMAR') !== false || strpos(strtoupper($row['water_status'] ?? ''), 'BAHAYA') !== false) ? 'badge-red' : 'badge-green' ?>" style="font-size: 0.72rem; padding: 2px 7px;">
+                          <?= htmlspecialchars($row['metal_type']) ?>: <?= number_format($row['metal_conc'], 3) ?> <?= htmlspecialchars($row['metal_unit'] ?? 'mg/L') ?>
+                        </span>
+                      <?php endif; ?>
                       <button type="button" onclick="editSampleName(<?= $row['id'] ?>, '<?= addslashes(htmlspecialchars($row['sample_name'])) ?>')" class="btn btn-secondary btn-sm" style="padding: 1px 6px; font-size: 0.7rem; border-radius: 4px;" title="Ubah atau Hapus Nama Sampel">
                         ✏️
                       </button>

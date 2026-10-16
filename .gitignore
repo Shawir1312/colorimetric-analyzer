@@ -13,3 +13,6 @@ web/data/*.db
 web/data/*.db-journal
 web/data/*.lock
 
+
+*.bak
+*.bak*

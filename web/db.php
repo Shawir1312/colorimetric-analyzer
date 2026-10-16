@@ -48,7 +48,27 @@ function getDb(): PDO {
         }
     }
 
+    checkAndMigrateMetalColumns($pdo, DB_TYPE);
     return $pdo;
+}
+
+
+function checkAndMigrateMetalColumns(PDO $pdo, string $driver = 'sqlite'): void {
+    $cols = [
+        'metal_type' => ($driver === 'sqlite') ? 'TEXT DEFAULT NULL' : 'VARCHAR(64) DEFAULT NULL',
+        'metal_conc' => ($driver === 'sqlite') ? 'REAL DEFAULT NULL' : 'DOUBLE DEFAULT NULL',
+        'metal_unit' => ($driver === 'sqlite') ? "TEXT DEFAULT 'mg/L'" : "VARCHAR(16) DEFAULT 'mg/L'",
+        'peak_wl' => ($driver === 'sqlite') ? 'INTEGER DEFAULT NULL' : 'INT DEFAULT NULL',
+        'water_status' => ($driver === 'sqlite') ? 'TEXT DEFAULT NULL' : 'VARCHAR(64) DEFAULT NULL',
+        'indicator' => ($driver === 'sqlite') ? 'TEXT DEFAULT NULL' : 'VARCHAR(128) DEFAULT NULL'
+    ];
+    foreach ($cols as $col => $type) {
+        try {
+            $pdo->exec("ALTER TABLE measurements ADD COLUMN $col $type");
+        } catch (Exception $e) {
+            // Kolom sudah ada
+        }
+    }
 }
 
 function initDatabase(PDO $pdo, string $driver = 'sqlite'): void {
@@ -88,6 +108,12 @@ function initDatabase(PDO $pdo, string $driver = 'sqlite'): void {
             charging INTEGER DEFAULT 0,
             rssi INTEGER DEFAULT 0,
             notes TEXT,
+            metal_type TEXT DEFAULT NULL,
+            metal_conc REAL DEFAULT NULL,
+            metal_unit TEXT DEFAULT 'mg/L',
+            peak_wl INTEGER DEFAULT NULL,
+            water_status TEXT DEFAULT NULL,
+            indicator TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );";
 
@@ -144,6 +170,12 @@ function initDatabase(PDO $pdo, string $driver = 'sqlite'): void {
             charging TINYINT DEFAULT 0,
             rssi INT DEFAULT 0,
             notes TEXT,
+            metal_type TEXT DEFAULT NULL,
+            metal_conc REAL DEFAULT NULL,
+            metal_unit TEXT DEFAULT 'mg/L',
+            peak_wl INTEGER DEFAULT NULL,
+            water_status TEXT DEFAULT NULL,
+            indicator TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 

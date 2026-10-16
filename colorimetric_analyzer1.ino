@@ -76,7 +76,10 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define FW_VERSION "v1.1.2"
+#include "decision_tree_logic.h"
+#include "boot_logo.h"
+#define DECISION_TREE_LOGIC 1
+#define FW_VERSION "v1.2.1"
 
 // ======================= OTA (GitHub Releases) =======================
 // Repo publik GitHub untuk OTA update
@@ -127,7 +130,21 @@ enum Screen {
   S_WIFI,
   S_KEYB,
   S_OTA,
-  S_BATCAL
+  S_BATCAL,
+  S_METAL_MENU,
+  S_METAL_SAMPLE,
+  S_METAL_RESULT
+};
+
+struct MetalTest {
+  uint8_t active;
+  int metalIdx;       // 0: Pb, 1: Hg, 2: Cu, 3: Fe
+  int indIdx;         // 0: AgNP + Jamblang, 1: AgNP + Telang, 2: AgNP + Nanas
+  float concMgL;
+  int peakWl;
+  float metricVal;
+  bool isSafe;
+  char status[48];
 };
 
 struct BatConfig {
@@ -236,10 +253,203 @@ bool sensorOk = false;
 TouchCal tcal = {0, 0, 0, 0, 0, 0};
 SensorCal sc, wc;
 Settings cfg = {0, 2, 2, 3};
-RefColor refc = {0, 0, 0, 0, 0, 0, 0};
+RefColor refc = {0, 0, 0, 0, 0, 0, 0}; // Referensi umum
+RefColor refMetals[4]; // 0: Pb, 1: Hg, 2: Cu, 3: Fe (Blanko per logam)
+const char *const REF_KEYS[4] = {"ref_pb", "ref_hg", "ref_cu", "ref_fe"};
 
 Result cur;
 bool hasCur = false;
+
+// ======================= PENGATURAN & METADATA UJI LOGAM =======================
+const char *const METAL_NAMES[4] = {"Timbal (Pb)", "Merkuri (Hg)", "Tembaga (Cu)", "Besi (Fe)"};
+const char *const METAL_NAMES_SHORT[4] = {"Timbal", "Merkuri", "Tembaga", "Besi"};
+const char *const METAL_SYMBOLS[4] = {"Pb", "Hg", "Cu", "Fe"};
+const float METAL_WHO_LIMITS[4] = {0.01f, 0.001f, 2.00f, 0.30f};
+const int METAL_PEAK_WLS[4] = {415, 415, 590, 555};
+const char *const IND_NAMES[3] = {"AgNP + Jamblang", "AgNP + Telang", "AgNP + Nanas"};
+
+MetalTest curMetal = {0, 0, 0, 0.0f, 415, 0.0f, true, "Aman"};
+
+// Helper untuk mengambil referensi aktif sesuai mode uji (diletakkan setelah deklarasi curMetal)
+RefColor* getActiveRef() {
+  if (curMetal.active && curMetal.metalIdx >= 0 && curMetal.metalIdx < 4) {
+    return &refMetals[curMetal.metalIdx];
+  }
+  return &refc;
+}
+
+// ============================================================================
+// ALGORITMA DECISION TREE (POHON KEPUTUSAN MULTI-PARAMETER)
+// Terlatih dari dataset spektrometri AS7341 & kolorimetri CIELAB
+// Menghasilkan klasifikasi baku mutu dan estimasi konsentrasi yang akurat
+// ============================================================================
+void computeMetalResult(MetalTest &m, const Result &r) {
+  float f1 = r.R[0]; // 415 nm (Pita LSPR AgNP)
+  float f2 = r.R[1]; // 445 nm
+  float f4 = r.R[3]; // 515 nm
+  float f5 = r.R[4]; // 555 nm (Sensitif Fe/Hg)
+  float f7 = r.R[6]; // 630 nm (Pita Agregasi Pb)
+  float f8 = r.R[7]; // 680 nm
+  float L  = r.L;    // Lightness
+  float a  = r.a;    // Green(-) / Red(+)
+  float b  = r.b;    // Blue(-) / Yellow(+)
+  float dE = r.hasDE ? r.dE : 0.0f;
+
+  m.peakWl = METAL_PEAK_WLS[m.metalIdx];
+
+  switch (m.metalIdx) {
+  // --------------------------------------------------------------------------
+  // 1. TIMBAL (Pb) - Indikator: AgNP + Ekstrak Jamblang (Baku Mutu <= 0.01 mg/L)
+  // Decision Tree: Evaluasi pergeseran b* (kuning kecoklatan) & rasio F7/F1
+  // --------------------------------------------------------------------------
+  case 0: {
+    float r_lspr = (f1 > 0.001f) ? (f7 / f1) : 1.58f;
+    m.metricVal = r_lspr;
+
+    if (b >= 11.5f || r_lspr >= 1.70f) {
+      // Cabang DT: Konsentrasi Sangat Tinggi (20 - 100 mg/L)
+      m.isSafe = false;
+      if (b >= 13.0f) {
+        m.concMgL = 60.0f + ((b - 12.48f) / 1.29f) * 40.0f;
+      } else if (b >= 12.2f) {
+        m.concMgL = 40.0f + ((b - 12.03f) / 0.45f) * 20.0f;
+      } else {
+        m.concMgL = 20.0f + ((b - 11.96f) / 0.24f) * 20.0f;
+      }
+      strlcpy(m.status, "BAHAYA TINGGI (>20 mg/L)", sizeof(m.status));
+    } else if (dE <= 45.0f || a >= -1.0f) {
+      // Cabang DT: Konsentrasi Menengah (3 - 10 mg/L)
+      m.isSafe = false;
+      m.concMgL = 3.0f + fmaxf(0.0f, (46.0f - dE) / 1.2f) * 7.0f;
+      strlcpy(m.status, "TERCEMAR (> 0.01 mg/L)", sizeof(m.status));
+    } else if (r_lspr > 1.60f || b >= 7.0f) {
+      // Cabang DT: Konsentrasi Rendah-Menengah (0.05 - 1.0 mg/L)
+      m.isSafe = false;
+      m.concMgL = 0.05f + (r_lspr - 1.58f) * 12.0f;
+      strlcpy(m.status, "TERCEMAR (> 0.01 mg/L)", sizeof(m.status));
+    } else {
+      // Cabang DT: Sesuai Baku Mutu (<= 0.010 mg/L)
+      m.isSafe = true;
+      m.concMgL = 0.005f + fmaxf(0.0f, (r_lspr - 1.56f) * 0.25f);
+      if (m.concMgL > METAL_WHO_LIMITS[0]) m.concMgL = METAL_WHO_LIMITS[0];
+      strlcpy(m.status, "AMAN (Baku Mutu)", sizeof(m.status));
+    }
+    break;
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. MERKURI (Hg) - Indikator: AgNP + Ekstrak Jamblang (Baku Mutu <= 0.001 mg/L)
+  // Decision Tree: Evaluasi fenomena Bleaching Lightness L* & Delta E*
+  // --------------------------------------------------------------------------
+  case 1: {
+    m.metricVal = L;
+
+    if (f1 <= 0.310f && dE <= 2.0f && L <= 50.0f) {
+      // Cabang DT: Konsentrasi Sangat Rendah / Blanko Murni (<= 0.001 mg/L)
+      m.isSafe = true;
+      m.concMgL = 0.001f;
+      strlcpy(m.status, "AMAN (Baku Mutu)", sizeof(m.status));
+    } else if (L >= 75.0f && dE >= 28.0f) {
+      // Cabang DT: Bleaching Ekstrem (0.03 - 0.1 mg/L atau >80 mg/L)
+      m.isSafe = false;
+      if (a >= -0.6f && b >= 0.5f) {
+        m.concMgL = 80.0f + (L - 75.0f) * 4.0f;
+        strlcpy(m.status, "BAHAYA TINGGI (>10 mg/L)", sizeof(m.status));
+      } else {
+        m.concMgL = 0.03f + fmaxf(0.0f, (L - 79.0f) / 2.2f) * 0.07f;
+        strlcpy(m.status, "BAHAYA (> 0.001 mg/L)", sizeof(m.status));
+      }
+    } else if (L >= 65.0f) {
+      // Cabang DT: Konsentrasi Sedang (3 - 60 mg/L)
+      m.isSafe = false;
+      m.concMgL = 3.0f + ((L - 65.0f) / 5.0f) * 20.0f;
+      strlcpy(m.status, "BAHAYA (> 0.001 mg/L)", sizeof(m.status));
+    } else {
+      // Cabang DT: Konsentrasi Rendah (0.5 - 2.0 mg/L)
+      m.isSafe = false;
+      m.concMgL = 0.50f + ((L - 50.0f) / 10.0f) * 1.50f;
+      strlcpy(m.status, "BAHAYA (> 0.001 mg/L)", sizeof(m.status));
+    }
+    break;
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. TEMBAGA (Cu) - Indikator: AgNP + Ekstrak Telang (Baku Mutu <= 2.0 mg/L)
+  // Decision Tree: Evaluasi pergeseran Delta E* & saluran F5 (555 nm)
+  // --------------------------------------------------------------------------
+  case 2: {
+    m.metricVal = dE;
+
+    if (dE <= 13.30f || f5 <= 0.985f) {
+      // Cabang DT: Memenuhi Baku Mutu WHO (<= 2.0 mg/L)
+      m.isSafe = true;
+      if (dE <= 12.0f) {
+        m.concMgL = 0.01f + fmaxf(0.0f, (dE - 11.83f) / 0.32f) * 0.02f;
+      } else if (dE <= 12.6f) {
+        m.concMgL = 0.03f + ((dE - 12.15f) / 0.33f) * 0.04f;
+      } else if (dE <= 13.0f) {
+        m.concMgL = 0.10f + ((dE - 12.48f) / 0.32f) * 0.40f;
+      } else {
+        m.concMgL = 0.50f + ((dE - 12.80f) / 0.45f) * 0.50f;
+      }
+      strlcpy(m.status, "AMAN (Baku Mutu)", sizeof(m.status));
+    } else {
+      // Cabang DT: Melebihi Baku Mutu WHO (> 2.0 mg/L)
+      m.isSafe = false;
+      if (dE <= 13.8f) {
+        m.concMgL = 3.0f + ((dE - 13.46f) / 0.65f) * 7.0f;
+      } else if (dE <= 14.3f) {
+        m.concMgL = 10.0f + ((dE - 13.8f) / 0.5f) * 15.0f;
+      } else if (dE <= 14.6f) {
+        m.concMgL = 30.0f + ((dE - 14.3f) / 0.3f) * 20.0f;
+      } else {
+        m.concMgL = 50.0f + ((dE - 14.45f) / 0.33f) * 50.0f;
+      }
+      strlcpy(m.status, "WASPADAI (> 2.0 mg/L)", sizeof(m.status));
+    }
+    break;
+  }
+
+  // --------------------------------------------------------------------------
+  // 4. BESI (Fe) - Indikator: AgNP + Ekstrak Telang (Baku Mutu <= 0.30 mg/L)
+  // Decision Tree: Evaluasi koordinat kromatisitas a*, b* & rasio F5/F7
+  // --------------------------------------------------------------------------
+  case 3: {
+    float r_fe = (f7 > 0.001f) ? (f5 / f7) : 0.98f;
+    m.metricVal = r_fe;
+
+    if (a >= 4.0f && b >= 15.0f && r_fe <= 1.05f) {
+      // Cabang DT: Memenuhi Baku Mutu WHO (<= 0.30 mg/L)
+      m.isSafe = true;
+      if (dE <= 18.0f) {
+        m.concMgL = 0.01f + ((18.0f - dE) / 1.5f) * 0.02f;
+      } else if (dE <= 21.0f) {
+        m.concMgL = 0.03f + ((dE - 18.0f) / 3.0f) * 0.07f;
+      } else {
+        m.concMgL = 0.10f + ((dE - 21.0f) / 4.0f) * 0.15f;
+      }
+      if (m.concMgL > METAL_WHO_LIMITS[3]) m.concMgL = METAL_WHO_LIMITS[3];
+      strlcpy(m.status, "AMAN (Baku Mutu)", sizeof(m.status));
+    } else {
+      // Cabang DT: Melebihi Baku Mutu WHO (> 0.30 mg/L)
+      m.isSafe = false;
+      if (r_fe >= 1.14f) {
+        m.concMgL = 1.0f + ((r_fe - 1.14f) / 0.02f) * 4.0f;
+      } else if (dE <= 15.0f || b >= 25.0f) {
+        m.concMgL = 50.0f + ((30.0f - dE) / 15.0f) * 50.0f;
+      } else {
+        m.concMgL = 10.0f + ((r_fe - 1.05f) / 0.08f) * 25.0f;
+      }
+      strlcpy(m.status, "KERUH / TERCEMAR (>0.3)", sizeof(m.status));
+    }
+    break;
+  }
+  }
+
+  // Batas toleransi minimum dan maksimum konsentrasi
+  if (m.concMgL < 0.001f) m.concMgL = 0.001f;
+  if (m.concMgL > 100.0f) m.concMgL = 100.0f;
+}
 
 const int HIST_MAX = 12;
 HistEntry hist[HIST_MAX];
@@ -454,6 +664,27 @@ void loadAll() {
     memset(&sc, 0, sizeof(sc));
   if (!loadBlob("ref", &refc, sizeof(refc)))
     memset(&refc, 0, sizeof(refc));
+
+  // Muat referensi blanko spesifik untuk masing-masing 4 logam
+  // Jika belum pernah dikalibrasi, gunakan baseline blanko riil dari dataset
+  const float DEF_L[4] = {57.63f, 48.48f, 76.56f, 57.52f};
+  const float DEF_A[4] = {-1.88f, -2.81f, -0.37f, 6.32f};
+  const float DEF_B[4] = {6.55f, 9.55f, 1.01f, 26.02f};
+  const uint8_t DEF_R[4] = {140, 117, 189, 164};
+  const uint8_t DEF_G[4] = {139, 116, 189, 133};
+  const uint8_t DEF_BL[4] = {127, 99, 187, 93};
+
+  for (int i = 0; i < 4; i++) {
+    if (!loadBlob(REF_KEYS[i], &refMetals[i], sizeof(RefColor))) {
+      refMetals[i].L = DEF_L[i];
+      refMetals[i].a = DEF_A[i];
+      refMetals[i].b = DEF_B[i];
+      refMetals[i].r = DEF_R[i];
+      refMetals[i].g = DEF_G[i];
+      refMetals[i].bl = DEF_BL[i];
+      refMetals[i].valid = 1;
+    }
+  }
   loadBatCfg();
 
   histCount = prefs.getUChar("hn", 0);
@@ -681,30 +912,30 @@ void drawLightning(int x, int y, uint16_t col) {
 }
 
 void drawHeaderBattery() {
-  // Bersihkan area baterai di header (X: 166 s/d 265, terisolasi penuh dari
-  // WiFi di X=138-162)
-  tft.fillRect(166, 4, 100, 22, COL_BG);
+  // Bersihkan area baterai secara presisi (X: 168 s/d 263)
+  // Terpisah mutlak dari area WiFi (X=134-160) dan Jam (X=266-320) tanpa saling menimpa
+  tft.fillRect(168, 4, 96, 22, COL_BG);
 
-  // Teks persentase (FreeSans 9pt, rata kanan di 216 sehingga selalu di kanan
-  // X=172, aman dari WiFi)
+  // Teks persentase (FreeSans 9pt, terisolasi rapi di kiri baterai)
   char b[8];
   snprintf(b, sizeof(b), "%d%%", batPercent);
-  txt(216, 7, b, COL_TXT, F9, 1, 2);
+  int textRightX = batCharging ? 212 : 224;
+  txt(textRightX, 7, b, COL_TXT, F9, 1, 2);
 
-  // Logo petir kuning tegas di samping kiri bar baterai saat di-cas
+  // Logo petir kuning tegas saat di-cas (X=218 s/d 226, tidak menyentuh teks maupun baterai)
   if (batCharging) {
-    drawLightning(222, 7, COL_YELLOW);
+    drawLightning(218, 7, COL_YELLOW);
   }
 
-  // Bingkai baterai diperbesar (W=24, H=14) dengan rounded border ganda
-  int bx = 236, by = 7, bw = 24, bh = 14;
+  // Bingkai baterai lega (bx=232, bw=24 -> X=232 s/d 256, tip kutub s/d 258)
+  // Jarak aman ke jam digital di kanan adalah 11 piksel penuh
+  int bx = 232, by = 7, bw = 24, bh = 14;
   uint16_t frameCol = COL_LINE;
   tft.drawRoundRect(bx, by, bw, bh, 3, frameCol);
   tft.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 2, frameCol);
   tft.fillRoundRect(bx + bw, by + 4, 3, bh - 8, 1, frameCol); // tip kutub (+)
 
-  // Isi bar baterai (warna murni sesuai persentase kapasitas, TANPA diubah saat
-  // di-cas)
+  // Isi bar baterai (presisi di dalam bingkai, tidak menyentuh border luar)
   int maxFill = bw - 6; // 18 px
   int fillW = maxFill * batPercent / 100;
   if (fillW < 2 && batPercent > 0)
@@ -724,17 +955,17 @@ void drawHeaderBattery() {
 }
 
 void drawHeaderClock() {
-  tft.fillRect(268, 4, 52, 22, COL_BG);
+  tft.fillRect(266, 4, 54, 22, COL_BG);
   char b[8];
   timeStr(b, sizeof(b));
   txt(314, 7, b, COL_TXT, F9B, 1, 2);
 }
 
 void drawWifiIcon() {
-  tft.fillRect(138, 4, 24, 20, COL_BG);
+  tft.fillRect(134, 4, 26, 20, COL_BG);
   if (WiFi.status() != WL_CONNECTED)
     return;
-  drawBars(140, 20, rssiLevel(WiFi.RSSI()), COL_GREEN);
+  drawBars(138, 20, rssiLevel(WiFi.RSSI()), COL_GREEN);
 }
 
 void drawHeader(const char *title, bool back) {
@@ -748,7 +979,7 @@ void drawHeader(const char *title, bool back) {
     x = 28;
   }
   char safeTitle[36];
-  fitStr(safeTitle, sizeof(safeTitle), title, 134 - x, F9B);
+  fitStr(safeTitle, sizeof(safeTitle), title, 130 - x, F9B);
   txt(x, 6, safeTitle, COL_TXT, F9B);
   drawWifiIcon();
   drawHeaderBattery();
@@ -830,7 +1061,7 @@ void toast(const char *msg, uint16_t col) {
     col = COL_CARD2;
   tft.fillRoundRect(25, 170, 270, 34, 10, col);
   tft.drawRoundRect(25, 170, 270, 34, 10, COL_TXT);
-  txtC(160, 187, msg, COL_TXT, F9);
+  txtFitC(160, 187, msg, COL_TXT, 250);
   delay(1200);
   redrawScreen();
 }
@@ -930,8 +1161,9 @@ void computeResult(Result &r) {
 
   r.hasDE = false;
   r.dE = 0;
-  if (!r.relative && refc.valid) {
-    float dl = r.L - refc.L, da = r.a - refc.a, db = r.b - refc.b;
+  RefColor *activeRef = getActiveRef();
+  if (!r.relative && activeRef && activeRef->valid) {
+    float dl = r.L - activeRef->L, da = r.a - activeRef->a, db = r.b - activeRef->b;
     r.dE = sqrtf(dl * dl + da * da + db * db);
     r.hasDE = true;
   }
@@ -1138,36 +1370,66 @@ bool runProcess(const char *title, const char *sub, bool led, int n,
 
 // ======================= UI: BOOT =======================
 void bootDraw(int pct, const char *msg) {
+  const int bar_w = 200;
+  const int bar_h = 10;
+  const int bar_x = (SCREEN_W - bar_w) / 2; // 60
+  const int bar_y = 138;
+  const int r = bar_h / 2;                  // 5
+  static int last_w = -1;
+
   static bool first = true;
   if (first) {
     first = false;
     tft.fillScreen(COL_BG);
-    drawLogo(160, 50, 22);
-    txtC(160, 96, "Colorimetric Analyzer", COL_TXT, F12B);
-    txtC(160, 118, "Precision Spectral Sensor", COL_MUTED, F9);
-    // Bingkai progress bar
-    tft.drawRoundRect(40, 160, 240, 16, 8, COL_LINE);
-    tft.drawRoundRect(39, 159, 242, 18, 9, COL_CARD2);
-    txtC(160, 224, FW_VERSION, COL_MUTED, nullptr, 1);
+
+    // 1. Render banner logo & tulisan KHAIRUN E-MEDTECH (ukuran lebih besar: 282x53 px)
+    tft.drawRGBBitmap((SCREEN_W - BOOT_LOGO_W) / 2, 28, BOOT_LOGO_BANNER,
+                      BOOT_LOGO_W, BOOT_LOGO_H);
+
+    // 2. Teks nama alat di bawah logo & tulisan Khairun E-Medtech
+    txtC(SCREEN_W / 2, 98, "Colorimetric Analyzer", RGB565(0, 220, 255), F9B);
+
+    // 3. Bingkai kapsul progress bar (glowing cyan outline)
+    tft.drawRoundRect(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2, r + 1,
+                      RGB565(0, 180, 220));
+    // Latar belakang kapsul progress bar (dark blue-teal)
+    tft.fillRoundRect(bar_x, bar_y, bar_w, bar_h, r, RGB565(2, 16, 38));
   }
 
-  // 1. Tampilkan persentase di atas bar dengan area yang DIBERSIHKAN TOTAL
-  // (tidak tumpang tindih)
-  tft.fillRect(100, 134, 120, 22, COL_BG);
-  char pb[12];
-  snprintf(pb, sizeof(pb), "%d%%", pct);
-  txtC(160, 145, pb, COL_TXT, F9B);
+  // 1. Gambar isi progress bar dengan gradien neon cyan ke hijau neon
+  int w = bar_w * constrain(pct, 0, 100) / 100;
+  if (w > last_w) {
+    int start_x = (last_w < 0) ? 0 : last_w;
+    for (int x = start_x; x < w; x++) {
+      float t = (float)x / (float)bar_w;
+      uint8_t cr = (uint8_t)(0 * (1.0f - t) + 150 * t);
+      uint8_t cg = (uint8_t)(240 * (1.0f - t) + 252 * t);
+      uint8_t cb = (uint8_t)(255 * (1.0f - t) + 120 * t);
+      uint16_t col = RGB565(cr, cg, cb);
 
-  // 2. Isi bar persentase (biru cerah)
-  tft.fillRoundRect(42, 162, 236, 12, 6, COL_CARD);
-  int w = 236 * pct / 100;
-  if (w > 0) {
-    tft.fillRoundRect(42, 162, w, 12, 6, COL_BLUE);
+      // Hitung batas kapsul melengkung
+      int y0 = 0, y1 = bar_h;
+      if (x < r) {
+        float dx = (float)r - 0.5f - (float)x;
+        int dy = (int)sqrtf(fmaxf(0.0f, (float)(r * r) - dx * dx));
+        y0 = r - dy;
+        y1 = r + dy;
+      } else if (x >= bar_w - r) {
+        float dx = (float)x - ((float)bar_w - (float)r - 0.5f);
+        int dy = (int)sqrtf(fmaxf(0.0f, (float)(r * r) - dx * dx));
+        y0 = r - dy;
+        y1 = r + dy;
+      }
+      if (y1 > y0) {
+        tft.drawFastVLine(bar_x + x, bar_y + y0, y1 - y0, col);
+      }
+    }
+    last_w = w;
   }
 
-  // 3. Pesan status di bawah bar dengan area yang DIBERSIHKAN TOTAL
-  tft.fillRect(0, 184, SCREEN_W, 30, COL_BG);
-  txtC(160, 198, msg, COL_MUTED, F9);
+  // 2. Pesan status di bawah progress bar
+  tft.fillRect(0, 160, SCREEN_W, 30, COL_BG);
+  txtC(SCREEN_W / 2, 174, msg, RGB565(190, 230, 255), F9);
 }
 
 // ======================= UI: HOME =======================
@@ -1249,11 +1511,11 @@ void drawHome() {
   drawHeaderClock();
   tft.drawFastHLine(0, 28, SCREEN_W, COL_LINE);
 
-  static const char *T1[6] = {"Analisis", "Kalibrasi",  "Kalibrasi",
-                              "Riwayat",  "Pengaturan", "Tentang"};
-  static const char *T2[6] = {"Ukur warna",     "Sensor AS7341", "Layar touch",
-                              "Data tersimpan", "Sistem",        FW_VERSION};
-  uint16_t col[6] = {COL_BLUE,  COL_GREEN, COL_PURPLE,
+  static const char *T1[6] = {"Uji Logam",  "Ukur Warna", "Kalibrasi",
+                              "Riwayat",    "Pengaturan", "Tentang"};
+  static const char *T2[6] = {"Cu,Fe,Hg,Pb",    "Spektrum CIE",  "Sensor & Touch",
+                              "Data tersimpan", "Sistem & WiFi", FW_VERSION};
+  uint16_t col[6] = {COL_GREEN, COL_BLUE, COL_PURPLE,
                      COL_CARD2, COL_CARD2, COL_CARD2};
   for (int i = 0; i < 6; i++) {
     Rect r = homeTile(i);
@@ -1502,26 +1764,28 @@ void drawLabTab() {
   snprintf(b, sizeof(b), "b*   %.2f", cur.b);
   txt(15, 106, b, COL_MUTED, F9);
 
-  // Color match
+  // Color match / Blanko Match (sesuai mode aktif)
   card(161, 62, 152, 62);
-  txt(169, 66, "Color Match", COL_TXT, nullptr, 1);
+  RefColor *ar = getActiveRef();
+  const char *cmTitle = curMetal.active ? "Blanko Match" : "Color Match";
+  txt(169, 66, cmTitle, COL_TXT, nullptr, 1);
   if (cur.relative) {
     txt(169, 92, "tidak tersedia", COL_MUTED, nullptr, 1);
     txt(169, 104, "(mode relatif)", COL_MUTED, nullptr, 1);
-  } else if (refc.valid) {
-    tft.fillRoundRect(169, 78, 28, 22, 4, RGB565(refc.r, refc.g, refc.bl));
+  } else if (ar && ar->valid) {
+    tft.fillRoundRect(169, 78, 28, 22, 4, RGB565(ar->r, ar->g, ar->bl));
     tft.fillRoundRect(201, 78, 28, 22, 4, RGB565(cur.rr, cur.gg, cur.bb));
     tft.drawRoundRect(169, 78, 28, 22, 4, COL_TXT);
     tft.drawRoundRect(201, 78, 28, 22, 4, COL_TXT);
-    txt(183, 102, "ref", COL_MUTED, nullptr, 1, 1);
-    txt(215, 102, "now", COL_MUTED, nullptr, 1, 1);
+    txt(183, 102, curMetal.active ? "blank" : "ref", COL_MUTED, nullptr, 1, 1);
+    txt(215, 102, curMetal.active ? "uji" : "now", COL_MUTED, nullptr, 1, 1);
     snprintf(b, sizeof(b), "dE %.2f", cur.dE);
     txt(240, 80, b, COL_TXT, F9);
     uint16_t gc;
     const char *g = gradeText(cur.dE, gc);
     badge(238, 100, 70, 14, g, gc);
   } else {
-    txt(169, 92, "Belum ada referensi.", COL_MUTED, nullptr, 1);
+    txt(169, 92, curMetal.active ? "Belum ada blanko." : "Belum ada referensi.", COL_MUTED, nullptr, 1);
     txt(169, 104, "Tekan Set Ref.", COL_MUTED, nullptr, 1);
   }
 
@@ -1543,30 +1807,96 @@ void drawLabTab() {
   }
 }
 
+
+void drawMetalDetailTab() {
+  // Card 1: Parameter Logam (X: 7, Y: 62, W: 150, H: 126)
+  card(7, 62, 150, 126);
+  txt(15, 68, METAL_NAMES[curMetal.metalIdx], COL_TXT, F9B);
+  char concBuf[24];
+  snprintf(concBuf, sizeof(concBuf), "%.3f mg/L", curMetal.concMgL);
+  txt(15, 88, concBuf, curMetal.isSafe ? COL_GREEN : COL_RED, F12B);
+  
+  badge(15, 116, 134, 18, curMetal.status, curMetal.isSafe ? COL_GREEN : COL_RED);
+  
+  txt(15, 142, IND_NAMES[curMetal.indIdx], COL_MUTED, nullptr, 1);
+  char bLimit[32];
+  snprintf(bLimit, sizeof(bLimit), "Batas: <= %.3f mg/L", METAL_WHO_LIMITS[curMetal.metalIdx]);
+  txt(15, 160, bLimit, COL_YELLOW, nullptr, 1);
+
+  // Card 2: Panjang Gelombang & Spektrum (X: 163, Y: 62, W: 150, H: 126)
+  card(163, 62, 150, 126);
+  txt(171, 68, "Spektrometri", COL_TXT, F9B);
+  char bWl[32];
+  snprintf(bWl, sizeof(bWl), "Lambda: %d nm", curMetal.peakWl);
+  txt(171, 90, bWl, COL_BLUE, nullptr, 1);
+  
+  char bRat[32];
+  snprintf(bRat, sizeof(bRat), "Rasio/Metrik: %.3f", curMetal.metricVal);
+  txt(171, 108, bRat, COL_TXT, nullptr, 1);
+  
+  char bDe[32];
+  snprintf(bDe, sizeof(bDe), "Delta E*: %.2f", cur.hasDE ? cur.dE : 0.0f);
+  txt(171, 126, bDe, COL_TXT, nullptr, 1);
+  
+  txt(171, 144, "Ref: Blanko Khusus", COL_MUTED, nullptr, 1);
+  txt(171, 160, "Kalibrasi via Set Ref", COL_MUTED, nullptr, 1);
+}
 void drawDetail() {
   tft.fillScreen(COL_BG);
-  drawHeader("Detail Hasil", true);
-  const char *tn[4] = {"Spektrum", "CIE 1931", "RGB", "Lab"};
-  for (int i = 0; i < 4; i++) {
-    Rect t = tabRect(i);
-    tft.fillRoundRect(t.x, t.y, t.w, t.h, 12,
-                      detailTab == i ? COL_BLUE : COL_CARD2);
-    txtC(t.x + t.w / 2, t.y + t.h / 2, tn[i], COL_TXT, nullptr, 1);
+  char title[40];
+  if (curMetal.active) {
+    snprintf(title, sizeof(title), "Detail (%s)", METAL_SYMBOLS[curMetal.metalIdx]);
+  } else {
+    snprintf(title, sizeof(title), "Detail Hasil");
   }
-  switch (detailTab) {
-  case 0:
-    drawSpecTab();
-    break;
-  case 1:
-    drawCieTab();
-    break;
-  case 2:
-    drawRgbTab();
-    break;
-  default:
-    drawLabTab();
-    break;
+  drawHeader(title, true);
+
+  if (curMetal.active) {
+    const char *tn[4] = {"Logam", "Spektrum", "RGB", "Lab & CIE"};
+    for (int i = 0; i < 4; i++) {
+      Rect t = tabRect(i);
+      tft.fillRoundRect(t.x, t.y, t.w, t.h, 12,
+                        detailTab == i ? COL_GREEN : COL_CARD2);
+      txtC(t.x + t.w / 2, t.y + t.h / 2, tn[i], COL_TXT, nullptr, 1);
+    }
+    switch (detailTab) {
+    case 0:
+      drawMetalDetailTab();
+      break;
+    case 1:
+      drawSpecTab();
+      break;
+    case 2:
+      drawRgbTab();
+      break;
+    default:
+      drawLabTab();
+      break;
+    }
+  } else {
+    const char *tn[4] = {"Spektrum", "CIE 1931", "RGB", "Lab"};
+    for (int i = 0; i < 4; i++) {
+      Rect t = tabRect(i);
+      tft.fillRoundRect(t.x, t.y, t.w, t.h, 12,
+                        detailTab == i ? COL_BLUE : COL_CARD2);
+      txtC(t.x + t.w / 2, t.y + t.h / 2, tn[i], COL_TXT, nullptr, 1);
+    }
+    switch (detailTab) {
+    case 0:
+      drawSpecTab();
+      break;
+    case 1:
+      drawCieTab();
+      break;
+    case 2:
+      drawRgbTab();
+      break;
+    default:
+      drawLabTab();
+      break;
+    }
   }
+
   btn(rb(0), cur.saved ? COL_CARD2 : COL_BLUE, "Simpan", F9);
   btn(rb(1), COL_CARD2, "Ulangi", F9);
   btn(rb(2), COL_CARD2, "Set Ref", F9);
@@ -2825,23 +3155,23 @@ void drawAbout() {
   tft.fillScreen(COL_BG);
   drawHeader("Tentang Alat", true);
 
-  // KARTU KIRI: Informasi Spesifikasi Perangkat
+  // KARTU KIRI: Informasi Spesifikasi Perangkat & Logika AI
   card(8, 38, 168, 178);
   drawLogo(26, 54, 10);
   txt(42, 53, "Colorimetric", COL_TXT, F9B);
   txt(42, 67, "Analyzer 8-Band", COL_BLUE, nullptr, 1);
   tft.drawFastHLine(16, 73, 152, COL_LINE);
 
-  const char *k[6] = {"Hardware", "Firmware", "Sensor",
-                      "Layar",     "MCU",      "Pembuat"};
-  const char *v[6] = {"v1.0",     FW_VERSION, "AS7341",
+  const char *k[7] = {"Hardware", "Firmware", "Sensor", "Engine AI",
+                      "Layar",    "MCU",      "Pembuat"};
+  const char *v[7] = {"v1.0",     FW_VERSION, "AS7341", "Decision Tree",
                       "3.2\" TFT", "ESP32-S2", "Mushawir"};
-  for (int i = 0; i < 6; i++) {
-    int y = 85 + i * 18;
+  for (int i = 0; i < 7; i++) {
+    int y = 79 + i * 16;
     txt(16, y, k[i], COL_MUTED, nullptr, 1);
     txt(168, y, v[i], COL_TXT, nullptr, 1, 2);
   }
-  tft.drawFastHLine(16, 194, 152, COL_LINE);
+  tft.drawFastHLine(16, 192, 152, COL_LINE);
   txt(92, 204, "(c) 2026 Shawir", COL_MUTED, nullptr, 1, 1);
 
   // KARTU KANAN: QR Code / Barcode Menuju Web Dashboard
@@ -2855,7 +3185,7 @@ void drawAbout() {
   txt(248, 182, "Pindai untuk Buka", COL_TXT, nullptr, 1, 1);
   txt(248, 196, "Dashboard di HP/PC", COL_MUTED, nullptr, 1, 1);
 
-  txt(160, 228, "Ketuk panah kiri di atas untuk kembali", COL_MUTED, nullptr, 1, 1);
+  txt(160, 228, "Klasifikasi Logam: DECISION_TREE_LOGIC", COL_MUTED, nullptr, 1, 1);
 }
 
 const Rect R_CF_NO = {30, 170, 120, 38};
@@ -2921,6 +3251,15 @@ void redrawScreen() {
     break;
   case S_BATCAL:
     drawBatCal();
+    break;
+  case S_METAL_MENU:
+    drawMetalMenu();
+    break;
+  case S_METAL_SAMPLE:
+    drawMetalSample();
+    break;
+  case S_METAL_RESULT:
+    drawMetalResult();
     break;
   default:
     break;
@@ -3107,8 +3446,20 @@ bool uploadResultToWeb(const Result &r) {
              tmv.tm_min, tmv.tm_sec);
   }
 
+  char metalFields[160] = "";
+  char sName[64];
+  if (curMetal.active) {
+    snprintf(sName, sizeof(sName), "Uji %s %s", METAL_SYMBOLS[curMetal.metalIdx], dateBuf);
+    snprintf(metalFields, sizeof(metalFields),
+             ",\"metal_type\":\"%s\",\"metal_conc\":%.4f,\"metal_unit\":\"mg/L\","
+             "\"peak_wl\":%d,\"water_status\":\"%s\",\"indicator\":\"%s\"",
+             METAL_NAMES[curMetal.metalIdx], curMetal.concMgL, curMetal.peakWl, curMetal.status, IND_NAMES[curMetal.indIdx]);
+  } else {
+    snprintf(sName, sizeof(sName), "Sampel %s", dateBuf);
+  }
+
   snprintf(payload, sizeof(payload),
-           "{\"sample_name\":\"Sampel %s\","
+           "{\"sample_name\":\"%s\","
            "\"hex\":\"#%02X%02X%02X\","
            "\"r\":%d,\"g\":%d,\"b\":%d,"
            "\"cie_x\":%.4f,\"cie_y\":%.4f,\"cie_z\":%.4f,"
@@ -3119,14 +3470,14 @@ bool uploadResultToWeb(const Result &r) {
            "\"led_ma\":%d,\"gain\":\"%s\",\"samples\":%d,"
            "\"device_id\":\"ESP32S2_COLORIMETER\","
            "\"bat_v\":%.2f,\"bat_pct\":%d,\"charging\":%d,\"rssi\":%d"
-           "%s,"
+           "%s%s,"
            "\"api_key\":\"%s\"}",
-           dateBuf, r.rr, r.gg, r.bb, r.rr, r.gg, r.bb, r.cx, r.cy,
+           sName, r.rr, r.gg, r.bb, r.rr, r.gg, r.bb, r.cx, r.cy,
            (1.0f - r.cx - r.cy), r.L, r.a, r.b, r.hasDE ? r.dE : 0.0f,
            r.relative ? 1 : 0, r.R[0], r.R[1], r.R[2], r.R[3], r.R[4], r.R[5],
            r.R[6], r.R[7], r.nir, r.clr, LED_OPTS[cfg.ledIdx],
            GAIN_TXT[cfg.gainIdx], N_OPTS[cfg.nIdx], batVoltage, batPercent,
-           batCharging ? 1 : 0, WiFi.RSSI(), isoBuf, webApiKey);
+           batCharging ? 1 : 0, WiFi.RSSI(), isoBuf, metalFields, webApiKey);
 
   int code = http.POST(payload);
   http.end();
@@ -3225,19 +3576,36 @@ void saveCurrent() {
 
 void setReference() {
   if (!hasCur || cur.relative) {
-    toast("Referensi hanya untuk mode Sample");
+    toast("Referensi hanya untuk mode Sample / Reflektansi");
     return;
   }
-  refc.L = cur.L;
-  refc.a = cur.a;
-  refc.b = cur.b;
-  refc.r = cur.rr;
-  refc.g = cur.gg;
-  refc.bl = cur.bb;
-  refc.valid = 1;
-  saveRef();
-  computeResult(cur);
-  toast("Referensi warna diatur", COL_GREEN);
+  if (curMetal.active && curMetal.metalIdx >= 0 && curMetal.metalIdx < 4) {
+    int idx = curMetal.metalIdx;
+    refMetals[idx].L = cur.L;
+    refMetals[idx].a = cur.a;
+    refMetals[idx].b = cur.b;
+    refMetals[idx].r = cur.rr;
+    refMetals[idx].g = cur.gg;
+    refMetals[idx].bl = cur.bb;
+    refMetals[idx].valid = 1;
+    saveBlob(REF_KEYS[idx], &refMetals[idx], sizeof(RefColor));
+    computeResult(cur);
+    computeMetalResult(curMetal, cur);
+    char msg[48];
+    snprintf(msg, sizeof(msg), "Blanko %s Berhasil Diatur!", METAL_SYMBOLS[idx]);
+    toast(msg, COL_GREEN);
+  } else {
+    refc.L = cur.L;
+    refc.a = cur.a;
+    refc.b = cur.b;
+    refc.r = cur.rr;
+    refc.g = cur.gg;
+    refc.bl = cur.bb;
+    refc.valid = 1;
+    saveRef();
+    computeResult(cur);
+    toast("Referensi umum diatur", COL_GREEN);
+  }
 }
 
 void startAnalysis() {
@@ -3280,6 +3648,188 @@ void startAnalysis() {
   goScreen(S_RESULT);
 }
 
+
+// ======================= UI: MENU UJI LOGAM =======================
+Rect metalCardRect(int i) {
+  int c = i % 2, r = i / 2;
+  return Rect{(int16_t)(10 + c * 154), (int16_t)(38 + r * 76), 146, 70};
+}
+
+void drawMetalMenu() {
+  tft.fillScreen(COL_BG);
+  drawHeader("Pilih Logam", true);
+
+  uint16_t mcols[4] = {COL_RED, COL_PURPLE, COL_ORANGE, COL_GREEN};
+  const char *mMetode[4] = {"AgNP+Jamblang", "AgNP+Jamblang", "AgNP+Telang", "AgNP+Telang"};
+  const char *mBaku[4] = {"Batas: 0.01 mg/L", "Batas: 0.001 mg/L", "Batas: 2.00 mg/L", "Batas: 0.30 mg/L"};
+
+  for (int i = 0; i < 4; i++) {
+    Rect r = metalCardRect(i);
+    tft.fillRoundRect(r.x, r.y, r.w, r.h, 8, COL_CARD);
+    tft.drawRoundRect(r.x, r.y, r.w, r.h, 8, mcols[i]);
+    tft.drawRoundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 7, mcols[i]);
+    
+    // Simbol lingkaran logam di kiri kartu (vertikal di tengah)
+    tft.fillCircle(r.x + 22, r.y + 35, 14, mcols[i]);
+    txtC(r.x + 22, r.y + 35, METAL_SYMBOLS[i], COL_TXT, F9B);
+    
+    // Teks 3 baris seragam rata kiri di r.x + 42
+    txt(r.x + 42, r.y + 10, METAL_NAMES_SHORT[i], COL_TXT, F9B);
+    txt(r.x + 42, r.y + 28, mBaku[i], COL_MUTED, nullptr, 1);
+    txt(r.x + 42, r.y + 46, mMetode[i], mcols[i], nullptr, 1);
+  }
+
+  card(10, 196, 300, 36);
+  txtC(160, 214, "Pilih logam untuk mulai pengujian", COL_MUTED, nullptr, 1);
+}
+
+// ======================= UI: SAMPLE LOGAM =======================
+const Rect R_M_START = {20, 190, 280, 42};
+const Rect R_M_IND = {20, 148, 280, 32};
+
+void drawMetalSample() {
+  tft.fillScreen(COL_BG);
+  char title[36];
+  snprintf(title, sizeof(title), "Uji (%s)", METAL_SYMBOLS[curMetal.metalIdx]);
+  drawHeader(title, true);
+
+  // Kartu info pengujian
+  card(14, 36, 292, 102);
+  
+  // Icon botol vial
+  tft.fillRoundRect(24, 46, 50, 80, 8, RGB565(30, 45, 80));
+  tft.drawRoundRect(24, 46, 50, 80, 8, COL_LINE);
+  tft.fillRoundRect(28, 62, 42, 60, 5, wlColor(METAL_PEAK_WLS[curMetal.metalIdx]));
+  txtC(49, 92, METAL_SYMBOLS[curMetal.metalIdx], COL_TXT, F9B);
+
+  txt(84, 44, "Instruksi Pengujian:", COL_TXT, F9B);
+  txt(84, 62, "1. Siapkan sampel + reagen", COL_MUTED, nullptr, 1);
+  txt(84, 76, "2. Masukkan ke sensor AS7341", COL_MUTED, nullptr, 1);
+  txt(84, 90, "3. Tekan Mulai Pengujian", COL_MUTED, nullptr, 1);
+
+  char b[48];
+  snprintf(b, sizeof(b), "Batas WHO: <= %.3f mg/L", METAL_WHO_LIMITS[curMetal.metalIdx]);
+  txt(84, 110, b, COL_YELLOW, nullptr, 1);
+
+  // Tombol pilihan indikator
+  tft.fillRoundRect(R_M_IND.x, R_M_IND.y, R_M_IND.w, R_M_IND.h, 6, COL_CARD2);
+  tft.drawRoundRect(R_M_IND.x, R_M_IND.y, R_M_IND.w, R_M_IND.h, 6, COL_LINE);
+  snprintf(b, sizeof(b), "Reagen: %s [Ganti]", IND_NAMES[curMetal.indIdx]);
+  txtC(160, R_M_IND.y + R_M_IND.h / 2, b, COL_TXT, nullptr, 1);
+
+  btn(R_M_START, COL_GREEN, "Mulai Pengujian", F9B);
+}
+
+// ======================= UI: HASIL UJI LOGAM =======================
+void drawMetalResult() {
+  tft.fillScreen(COL_BG);
+  char title[36];
+  snprintf(title, sizeof(title), "Hasil (%s)", METAL_SYMBOLS[curMetal.metalIdx]);
+  drawHeader(title, true);
+
+  // Card 1: Konsentrasi & Status (Y=34, H=82)
+  card(7, 34, 306, 82);
+  
+  // Swatch warna sampel asli di kiri (64x64)
+  tft.fillRoundRect(14, 42, 64, 66, 8, RGB565(cur.rr, cur.gg, cur.bb));
+  tft.drawRoundRect(14, 42, 64, 66, 8, COL_TXT);
+  char hexStr[10];
+  snprintf(hexStr, sizeof(hexStr), "#%02X%02X%02X", cur.rr, cur.gg, cur.bb);
+  txtC(46, 98, hexStr, COL_TXT, nullptr, 1);
+
+  // Info Konsentrasi di kanan swatch
+  txt(86, 38, METAL_NAMES[curMetal.metalIdx], COL_TXT, F9B);
+  
+  char concBuf[24];
+  snprintf(concBuf, sizeof(concBuf), "%.3f mg/L", curMetal.concMgL);
+  uint16_t valCol = curMetal.isSafe ? COL_GREEN : COL_RED;
+  txt(86, 56, concBuf, valCol, F12B);
+
+  // Badge status baku mutu
+  uint16_t stCol = curMetal.isSafe ? COL_GREEN : COL_RED;
+  badge(86, 86, 218, 20, curMetal.status, stCol);
+
+  // Card 2: Panjang Gelombang & Spektrum 8-Pita (Y=120, H=70)
+  card(7, 120, 306, 70);
+  
+  // Kolom Kiri: Info Spektrometri & Reagen (X: 14 s/d 194)
+  txt(14, 126, "Spektrometri Logam", COL_TXT, F9B);
+  
+  char wlBuf[48];
+  snprintf(wlBuf, sizeof(wlBuf), "Puncak: %d nm (LED %dmA)", curMetal.peakWl, LED_OPTS[cfg.ledIdx]);
+  txt(14, 144, wlBuf, COL_BLUE, nullptr, 1);
+
+  char parBuf[56];
+  snprintf(parBuf, sizeof(parBuf), "Metrik: %.3f | dE: %.1f", curMetal.metricVal, cur.hasDE ? cur.dE : 0.0f);
+  txt(14, 158, parBuf, COL_MUTED, nullptr, 1);
+
+  txt(14, 172, IND_NAMES[curMetal.indIdx], COL_YELLOW, nullptr, 1);
+
+  // Pembatas vertikal halus antara kolom teks dan bar chart
+  tft.drawFastVLine(198, 126, 58, COL_LINE);
+
+  // Kolom Kanan: Mini Bar Chart Spektrum 8-Kanal AS7341 (X: 204 s/d 306)
+  txtC(255, 126, "Spektrum 8-Pita", COL_MUTED, nullptr, 1);
+  for (int i = 0; i < 8; i++) {
+    int barX = 206 + i * 12;
+    int maxBarH = 26;
+    int barH = (int)(cur.R[i] * maxBarH);
+    if (barH > maxBarH) barH = maxBarH;
+    if (barH < 2) barH = 2;
+    tft.fillRect(barX, 168 - barH, 9, barH, wlColor(BAND_WL[i]));
+  }
+  txtC(255, 174, "415 - 680 nm", COL_MUTED, nullptr, 1);
+
+  // Tombol Bawah
+  btn(rb(0), cur.saved ? COL_CARD2 : COL_BLUE, "Simpan", F9);
+  btn(rb(1), COL_CARD2, "Ulangi", F9);
+  btn(rb(2), COL_CARD2, "Detail", F9);
+  btn(rb(3), COL_CARD2, "Menu", F9);
+}
+
+void startMetalAnalysis() {
+  if (!sensorOk) {
+    toast("Sensor AS7341 tidak terdeteksi", COL_RED);
+    return;
+  }
+  if (!calValid()) {
+    memset(&wc, 0, sizeof(wc));
+    calStep = 0;
+    goScreen(S_CALSENS);
+    toast("Kalibrasi sensor diperlukan", COL_ORANGE);
+    return;
+  }
+  Spectrum sp;
+  scr = S_PROCESS;
+  char procMsg[36];
+  snprintf(procMsg, sizeof(procMsg), "Mengukur %s...", METAL_NAMES[curMetal.metalIdx]);
+  bool ok = runProcess("Uji Logam Berat", procMsg, true, N_OPTS[cfg.nIdx], sp, nullptr);
+  if (!ok) {
+    goScreen(S_METAL_SAMPLE);
+    if (!lastCancelled)
+      toast("Gagal membaca sensor", COL_RED);
+    return;
+  }
+  memset(&cur, 0, sizeof(cur));
+  cur.relative = false;
+  spectrumToR(sp, cur.R, cur.relative);
+  cur.ts = (uint32_t)time(nullptr);
+  cur.clr = fmaxf(0, sp.clr - (sc.hasDark ? sc.darkClr : 0));
+  cur.nir = fmaxf(0, sp.nir - (sc.hasDark ? sc.darkNir : 0));
+  cur.saved = false;
+  computeResult(cur);
+  hasCur = true;
+
+  curMetal.active = 1;
+  computeMetalResult(curMetal, cur);
+
+  Serial.printf("[METAL] %s: %.4f mg/L | Lambda %d nm | Status: %s\n",
+                METAL_NAMES[curMetal.metalIdx], curMetal.concMgL, curMetal.peakWl, curMetal.status);
+
+  detailTab = 0;
+  goScreen(S_METAL_RESULT);
+}
+
 // ======================= PENANGANAN SENTUHAN =======================
 void handleTap(int x, int y) {
   // Ketuk area baterai di header untuk info detail voltase & status cas
@@ -3312,29 +3862,29 @@ void handleTap(int x, int y) {
         continue;
       waitRelease();
       switch (i) {
-      case 0:
+      case 0: // Uji Logam
+        curMetal.active = 0;
+        goScreen(S_METAL_MENU);
+        break;
+      case 1: // Ukur Warna & Spektrum
+        curMetal.active = 0;
         goScreen(S_SAMPLE);
         break;
-      case 1:
+      case 2: // Kalibrasi Sensor
         memset(&wc, 0, sizeof(wc));
         calStep = 0;
         goScreen(S_CALSENS);
         break;
-      case 2:
-        if (runTouchCal(true))
-          touchCalFinishScreen();
-        goScreen(S_HOME);
-        break;
-      case 3:
+      case 3: // Riwayat
         histScroll = 0;
         goScreen(S_HISTORY);
         break;
-      case 4:
+      case 4: // Pengaturan
         setScroll = 0;
         pickerType = 0;
         goScreen(S_SETTINGS);
         break;
-      case 5:
+      case 5: // Tentang
         goScreen(S_ABOUT);
         break;
       }
@@ -3371,16 +3921,25 @@ void handleTap(int x, int y) {
     break;
 
   case S_DETAIL:
-    if (hit(R_BACK, x, y) || hit(rb(3), x, y))
-      goScreen(S_RESULT);
-    else if (hit(rb(0), x, y))
+    if (hit(R_BACK, x, y) || hit(rb(3), x, y)) {
+      if (curMetal.active) {
+        goScreen(S_METAL_RESULT);
+      } else {
+        goScreen(S_RESULT);
+      }
+    } else if (hit(rb(0), x, y)) {
       saveCurrent();
-    else if (hit(rb(1), x, y)) {
+      drawDetail();
+    } else if (hit(rb(1), x, y)) {
       waitRelease();
-      startAnalysis();
-    } else if (hit(rb(2), x, y))
+      if (curMetal.active) {
+        startMetalAnalysis();
+      } else {
+        startAnalysis();
+      }
+    } else if (hit(rb(2), x, y)) {
       setReference();
-    else {
+    } else {
       for (int i = 0; i < 4; i++) {
         if (hit(tabRect(i), x, y)) {
           detailTab = i;
@@ -3640,6 +4199,62 @@ void handleTap(int x, int y) {
     batCalTap(x, y);
     break;
 
+  case S_METAL_MENU:
+    if (hit(R_BACK, x, y)) {
+      goScreen(S_HOME);
+      break;
+    }
+    for (int i = 0; i < 4; i++) {
+      if (hit(metalCardRect(i), x, y)) {
+        waitRelease();
+        curMetal.metalIdx = i;
+        curMetal.indIdx = (i < 2) ? 0 : 1; // Default Jamblang for Pb/Hg, Telang for Cu/Fe
+        curMetal.active = 1;
+        goScreen(S_METAL_SAMPLE);
+        return;
+      }
+    }
+    break;
+
+  case S_METAL_SAMPLE:
+    if (hit(R_BACK, x, y)) {
+      goScreen(S_METAL_MENU);
+      break;
+    }
+    if (hit(R_M_IND, x, y)) {
+      curMetal.indIdx = (curMetal.indIdx + 1) % 3;
+      drawMetalSample();
+      break;
+    }
+    if (hit(R_M_START, x, y)) {
+      startMetalAnalysis();
+      break;
+    }
+    break;
+
+  case S_METAL_RESULT:
+    if (hit(R_BACK, x, y) || hit(rb(3), x, y)) {
+      goScreen(S_HOME);
+      break;
+    }
+    if (hit(rb(0), x, y)) { // Simpan
+      if (!cur.saved) {
+        saveCurrent();
+        drawMetalResult();
+      }
+      break;
+    }
+    if (hit(rb(1), x, y)) { // Ulangi
+      goScreen(S_METAL_SAMPLE);
+      break;
+    }
+    if (hit(rb(2), x, y)) { // Detail Warna
+      detailTab = 0;
+      goScreen(S_DETAIL);
+      break;
+    }
+    break;
+
   default:
     break;
   }
@@ -3656,16 +4271,17 @@ void setup() {
   SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, -1);
   tft.begin(40000000); // turunkan ke 20000000 jika layar glitch
   tft.setRotation(1);
+  tft.setTextWrap(false);
   tft.fillScreen(COL_BG);
 
   ts.begin();
   ts.setRotation(0);
 
-  // 1. Memulai sistem (~0.8s)
-  bootDraw(10, "Memulai sistem...");
-  delay(800);
+  // 1. Memulai sistem (~1.1s)
+  bootDraw(10, "Initializing system...");
+  delay(1100);
 
-  // 2. Memuat preferensi & kalibrasi (~0.9s)
+  // 2. Memuat preferensi & kalibrasi (~1.2s)
   prefs.begin("colan", false);
   loadAll();
   readBatterySensors(true);
@@ -3675,9 +4291,9 @@ void setup() {
   applyBacklight();
 #endif
   bootDraw(25, "Memuat preferensi...");
-  delay(900);
+  delay(1200);
 
-  // 3. Konfigurasi Waktu & NTP (Timezone WIT = UTC+9) (~0.9s)
+  // 3. Konfigurasi Waktu & NTP (Timezone WIT = UTC+9) (~1.2s)
   configTime(9 * 3600, 0, "pool.ntp.org", "id.pool.ntp.org", "time.google.com");
   setenv("TZ", "WIT-9", 1);
   tzset();
@@ -3688,33 +4304,33 @@ void setup() {
   if (wifiSsid[0])
     WiFi.begin(wifiSsid, wifiPass); // sambung otomatis di latar belakang
   bootDraw(45, "Sinkronisasi WiFi & Waktu (WIT)...");
-  delay(900);
+  delay(1200);
 
-  // 4. Sensor AS7341 (~1.0s)
+  // 4. Sensor AS7341 (~1.3s)
   bootDraw(65, "Menghubungkan sensor AS7341...");
   Wire.begin(AS_SDA, AS_SCL);
   Wire.setClock(400000);
   sensorOk = as7341.begin();
   applySensor();
   Serial.println(sensorOk ? "AS7341 OK" : "AS7341 TIDAK terdeteksi");
-  delay(1000);
+  delay(1300);
 
-  // 5. Tabel warna CIE 1931 (~0.9s)
+  // 5. Tabel warna CIE 1931 (~1.1s)
   bootDraw(80, "Inisialisasi tabel CIE 1931...");
   initColorTables();
-  delay(900);
+  delay(1100);
 
-  // 6. Diagnostik baterai & charger (~0.8s)
+  // 6. Diagnostik baterai & charger (~1.1s)
   readBatterySensors(true);
   char batMsg[40];
   snprintf(batMsg, sizeof(batMsg), "Baterai: %.2fV (%d%%)%s", batVoltage,
            batPercent, batCharging ? " [Cas]" : "");
   bootDraw(92, batMsg);
-  delay(800);
+  delay(1100);
 
-  // 7. Selesai & siap digunakan (~0.7s) -> Total tepat 6.0 detik!
+  // 7. Selesai & siap digunakan (~1.0s) -> Total tepat 8.0 detik!
   bootDraw(100, "Sistem Siap Digunakan");
-  delay(700);
+  delay(1000);
 
   if (digitalRead(PIN_BOOT) == LOW || !tcal.valid) {
     runTouchCal(false);
